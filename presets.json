@@ -1,1 +1,361 @@
-{}
+{
+  "overwatch": {
+    "name": "Overwatch",
+    "description": "5v5 competitive match",
+    "duration": 90,
+    "maxParticipants": 5,
+    "roles": [
+      {
+        "name": "Tank",
+        "emoji": "🛡️",
+        "maxSlots": 1
+      },
+      {
+        "name": "Damage",
+        "emoji": "⚔️",
+        "maxSlots": 2
+      },
+      {
+        "name": "Support",
+        "emoji": "❤️",
+        "maxSlots": 2
+      }
+    ]
+  },
+  "helldivers": {
+    "name": "Helldivers 2",
+    "description": "Spread managed democracy",
+    "duration": 120,
+    "maxParticipants": 4,
+    "roles": [
+      {
+        "name": "Helldiver",
+        "emoji": "🦅",
+        "maxSlots": 4
+      }
+    ]
+  },
+  "division": {
+    "name": "The Division",
+    "description": "Squad operations",
+    "duration": 120,
+    "maxParticipants": 4,
+    "roles": [
+      {
+        "name": "Healer",
+        "emoji": "❤️",
+        "maxSlots": 1
+      },
+      {
+        "name": "DPS",
+        "emoji": "🔫",
+        "maxSlots": 2
+      },
+      {
+        "name": "Specialist",
+        "emoji": "🎯",
+        "maxSlots": 1
+      }
+    ]
+  },
+  "wow-raid": {
+    "name": "World of Warcraft Raid",
+    "description": "20-player raid",
+    "duration": 180,
+    "maxParticipants": 20,
+    "roles": [
+      {
+        "name": "Tank",
+        "emoji": "🛡️",
+        "maxSlots": 2
+      },
+      {
+        "name": "Healer",
+        "emoji": "❤️",
+        "maxSlots": 4
+      },
+      {
+        "name": "DPS",
+        "emoji": "⚔️",
+        "maxSlots": 14
+      }
+    ]
+  },
+  "destiny-raid": {
+    "name": "Destiny 2 Raid",
+    "description": "6-player endgame content",
+    "duration": 180,
+    "maxParticipants": 6,
+    "roles": [
+      {
+        "name": "Raider",
+        "emoji": "👤",
+        "maxSlots": 6
+      }
+    ]
+  },
+  "valorant": {
+    "name": "Valorant",
+    "description": "5v5 tactical shooter",
+    "duration": 90,
+    "maxParticipants": 5,
+    "roles": [
+      {
+        "name": "Duelist",
+        "emoji": "⚔️",
+        "maxSlots": 2
+      },
+      {
+        "name": "Controller",
+        "emoji": "💨",
+        "maxSlots": 1
+      },
+      {
+        "name": "Sentinel",
+        "emoji": "🛡️",
+        "maxSlots": 1
+      },
+      {
+        "name": "Initiator",
+        "emoji": "🎯",
+        "maxSlots": 1
+      }
+    ]
+  },
+  "apex": {
+    "name": "Apex Legends",
+    "description": "3-player squad",
+    "duration": 60,
+    "maxParticipants": 3,
+    "roles": [
+      {
+        "name": "Legend",
+        "emoji": "🎮",
+        "maxSlots": 3
+      }
+    ]
+  },
+  "league": {
+    "name": "League of Legends",
+    "description": "5v5 MOBA",
+    "duration": 90,
+    "maxParticipants": 5,
+    "roles": [
+      {
+        "name": "Top",
+        "emoji": "⬆️",
+        "maxSlots": 1
+      },
+      {
+        "name": "Jungle",
+        "emoji": "🌲",
+        "maxSlots": 1
+      },
+      {
+        "name": "Mid",
+        "emoji": "⭐",
+        "maxSlots": 1
+      },
+      {
+        "name": "ADC",
+        "emoji": "🎯",
+        "maxSlots": 1
+      },
+      {
+        "name": "Support",
+        "emoji": "❤️",
+        "maxSlots": 1
+      }
+    ]
+  },
+  "dnd": {
+    "name": "D&D Session",
+    "description": "Tabletop RPG session",
+    "duration": 240,
+    "maxParticipants": 6,
+    "roles": [
+      {
+        "name": "DM",
+        "emoji": "📖",
+        "maxSlots": 1
+      },
+      {
+        "name": "Player",
+        "emoji": "🎲",
+        "maxSlots": 5
+      }
+    ]
+  },
+  "minecraft": {
+    "name": "Minecraft",
+    "description": "Building/survival session",
+    "duration": 120,
+    "maxParticipants": 0,
+    "roles": [
+      {
+        "name": "Builder",
+        "emoji": "🔨",
+        "maxSlots": null
+      },
+      {
+        "name": "Miner",
+        "emoji": "⛏️",
+        "maxSlots": null
+      },
+      {
+        "name": "Explorer",
+        "emoji": "🗺️",
+        "maxSlots": null
+      }
+    ]
+  },
+  "cod-warzone": {
+    "name": "Call of Duty: Warzone",
+    "description": "Battle Royale squad",
+    "duration": 90,
+    "maxParticipants": 4,
+    "roles": [
+      {
+        "name": "Operator",
+        "emoji": "🎖️",
+        "maxSlots": 4
+      }
+    ]
+  },
+  "ffxiv-raid": {
+    "name": "Final Fantasy XIV Raid",
+    "description": "8-player raid",
+    "duration": 120,
+    "maxParticipants": 8,
+    "roles": [
+      {
+        "name": "Tank",
+        "emoji": "🛡️",
+        "maxSlots": 2
+      },
+      {
+        "name": "Healer",
+        "emoji": "❤️",
+        "maxSlots": 2
+      },
+      {
+        "name": "DPS",
+        "emoji": "⚔️",
+        "maxSlots": 4
+      }
+    ]
+  },
+  "csgo": {
+    "name": "Counter-Strike",
+    "description": "5v5 competitive",
+    "duration": 90,
+    "maxParticipants": 5,
+    "roles": [
+      {
+        "name": "Entry Fragger",
+        "emoji": "⚡",
+        "maxSlots": 1
+      },
+      {
+        "name": "AWPer",
+        "emoji": "🎯",
+        "maxSlots": 1
+      },
+      {
+        "name": "Support",
+        "emoji": "🛡️",
+        "maxSlots": 1
+      },
+      {
+        "name": "Lurker",
+        "emoji": "👁️",
+        "maxSlots": 1
+      },
+      {
+        "name": "IGL",
+        "emoji": "📋",
+        "maxSlots": 1
+      }
+    ]
+  },
+  "phasmophobia": {
+    "name": "Phasmophobia",
+    "description": "Ghost hunting session",
+    "duration": 90,
+    "maxParticipants": 4,
+    "roles": [
+      {
+        "name": "Investigator",
+        "emoji": "👻",
+        "maxSlots": 4
+      }
+    ]
+  },
+  "among-us": {
+    "name": "Among Us",
+    "description": "Social deduction game",
+    "duration": 60,
+    "maxParticipants": 10,
+    "roles": [
+      {
+        "name": "Crewmate",
+        "emoji": "👨‍🚀",
+        "maxSlots": 10
+      }
+    ]
+  },
+  "sea-of-thieves": {
+    "name": "Sea of Thieves",
+    "description": "Pirate adventure",
+    "duration": 120,
+    "maxParticipants": 4,
+    "roles": [
+      {
+        "name": "Captain",
+        "emoji": "🏴‍☠️",
+        "maxSlots": 1
+      },
+      {
+        "name": "Crew",
+        "emoji": "⚓",
+        "maxSlots": 3
+      }
+    ]
+  },
+  "rust": {
+    "name": "Rust",
+    "description": "Survival session",
+    "duration": 180,
+    "maxParticipants": 0,
+    "roles": [
+      {
+        "name": "Farmer",
+        "emoji": "🌾",
+        "maxSlots": null
+      },
+      {
+        "name": "Builder",
+        "emoji": "🔨",
+        "maxSlots": null
+      },
+      {
+        "name": "PvP",
+        "emoji": "⚔️",
+        "maxSlots": null
+      }
+    ]
+  },
+  "tarkov": {
+    "name": "Escape from Tarkov",
+    "description": "Hardcore raid",
+    "duration": 90,
+    "maxParticipants": 5,
+    "roles": [
+      {
+        "name": "PMC",
+        "emoji": "🎖️",
+        "maxSlots": 5
+      }
+    ]
+  }
+}
