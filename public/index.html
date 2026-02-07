@@ -471,10 +471,10 @@
         </header>
 
         <div class="tabs">
-            <button class="tab active" onclick="switchTab('events')">📅 Events</button>
-            <button class="tab" onclick="switchTab('presets')">📋 Presets</button>
-            <button class="tab" onclick="switchTab('create')">➕ Create Event</button>
-            <button class="tab" onclick="switchTab('createPreset')">🎨 Create Preset</button>
+            <button class="tab active" onclick="switchTab('events', this)">📅 Events</button>
+            <button class="tab" onclick="switchTab('presets', this)">📋 Presets</button>
+            <button class="tab" onclick="switchTab('create', this)">➕ Create Event</button>
+            <button class="tab" onclick="switchTab('createPreset', this)">🎨 Create Preset</button>
         </div>
 
         <!-- Events Tab -->
@@ -631,6 +631,7 @@
     </div>
 
     <script>
+        const API_URL = window.location.origin + '/api';
         const API_URL = 'http://localhost:3000/api';
         let selectedPreset = null;
 
@@ -646,10 +647,12 @@
             document.getElementById('eventDateTime').value = now.toISOString().slice(0, 16);
         });
 
-        function switchTab(tab) {
+        function switchTab(tab, clickedElement) {
             // Update tab buttons
             document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
-            event.target.classList.add('active');
+            if (clickedElement) {
+                clickedElement.classList.add('active');
+            }
 
             // Update tab content
             document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
@@ -833,7 +836,7 @@
 
                 if (data.success) {
                     closePresetModal();
-                    switchTab('events');
+                    switchTab('events', document.querySelectorAll('.tab')[0]);
                     loadEvents();
                     loadStats();
                     showAlert('createAlert', 'Event created successfully!', 'success');
@@ -1039,16 +1042,16 @@
         async function loadPresetManagement() {
             try {
                 const response = await fetch(`${API_URL}/presets`);
-                const presets = await response.json();
+                const data = await response.json();
                 
                 const container = document.getElementById('presetManagementList');
                 
-                if (Object.keys(presets).length === 0) {
+                if (!data.success || Object.keys(data.presets).length === 0) {
                     container.innerHTML = '<p style="color: var(--text-muted); text-align: center; padding: 20px;">No custom presets yet. Create your first one above!</p>';
                     return;
                 }
 
-                container.innerHTML = Object.entries(presets).map(([key, preset]) => `
+                container.innerHTML = Object.entries(data.presets).map(([key, preset]) => `
                     <div class="preset-card" style="margin-bottom: 15px; padding: 15px; background: var(--discord-gray); border-radius: 6px;">
                         <div style="display: flex; justify-content: space-between; align-items: start;">
                             <div style="flex: 1;">
