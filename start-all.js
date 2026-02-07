@@ -6,7 +6,7 @@ console.log('🚀 Starting Discord Event Bot with Web Interface...\n');
 
 // Start Discord bot
 console.log('📡 Starting Discord bot...');
-const bot = spawn('node', ['bot.js'], {
+const bot = spawn('node', ['src/bot.js'], {
     stdio: 'inherit',
     shell: true
 });
