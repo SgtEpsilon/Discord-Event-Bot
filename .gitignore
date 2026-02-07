@@ -264,3 +264,4 @@ backup/
 
 # Test events
 test-events.json
+package-lock.json
