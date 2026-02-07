@@ -1,0 +1,27 @@
+{
+  "name": "discord-event-bot",
+  "version": "1.0.0",
+  "description": "Discord bot for managing events with Google Calendar integration and custom signup roles",
+  "main": "bot.js",
+  "scripts": {
+    "start": "node bot.js",
+    "dev": "nodemon bot.js"
+  },
+  "keywords": [
+    "discord",
+    "bot",
+    "events",
+    "calendar",
+    "google-calendar"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "discord.js": "^14.14.1",
+    "googleapis": "^130.0.0",
+    "dotenv": "^16.3.1"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.2"
+  }
+}
