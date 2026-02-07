@@ -152,6 +152,11 @@
             background: #c03537;
         }
 
+        .btn-small {
+            padding: 6px 12px;
+            font-size: 12px;
+        }
+
         .events-grid {
             display: grid;
             gap: 20px;
@@ -373,6 +378,7 @@
             cursor: pointer;
             transition: all 0.2s;
             border: 2px solid transparent;
+            position: relative;
         }
 
         .preset-card:hover {
@@ -380,10 +386,17 @@
             transform: translateY(-2px);
         }
 
+        .preset-card-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: start;
+            margin-bottom: 8px;
+        }
+
         .preset-name {
             font-size: 18px;
             font-weight: bold;
-            margin-bottom: 8px;
+            flex: 1;
         }
 
         .preset-desc {
@@ -397,6 +410,14 @@
             gap: 15px;
             font-size: 12px;
             color: var(--text-muted);
+        }
+
+        .preset-actions {
+            display: flex;
+            gap: 8px;
+            margin-top: 12px;
+            padding-top: 12px;
+            border-top: 1px solid var(--discord-gray);
         }
 
         .empty-state {
@@ -492,6 +513,7 @@
                 <h2>Event Presets</h2>
                 <button class="btn btn-primary" onclick="loadPresets()">🔄 Refresh</button>
             </div>
+            <div id="presetsAlert"></div>
             <div id="presetsList" class="preset-grid"></div>
         </div>
 
@@ -559,7 +581,7 @@
                     <label for="presetId">Preset ID * (lowercase, no spaces)</label>
                     <input type="text" id="presetId" required placeholder="e.g., my-game" pattern="[a-z0-9-]+" title="Lowercase letters, numbers, and hyphens only">
                     <small style="color: var(--text-muted); font-size: 12px; margin-top: 5px; display: block;">
-                        This is used in commands like: !preset my-game 15-02-2026 20:00
+                        This is used in commands like: /preset preset_name:my-game
                     </small>
                 </div>
 
@@ -601,11 +623,6 @@
                     <button type="button" class="btn btn-danger" onclick="resetPresetForm()" style="padding: 15px; font-size: 16px;">Reset</button>
                 </div>
             </form>
-
-            <div style="margin-top: 40px; padding-top: 20px; border-top: 1px solid var(--discord-gray);">
-                <h3 style="margin-bottom: 15px;">Manage Existing Presets</h3>
-                <div id="presetManagementList"></div>
-            </div>
         </div>
     </div>
 
@@ -660,7 +677,6 @@
             // Load data when switching to tabs
             if (tab === 'events') loadEvents();
             if (tab === 'presets') loadPresets();
-            if (tab === 'createPreset') loadPresetManagement();
         }
 
         async function loadStats() {
@@ -778,14 +794,27 @@
                     container.innerHTML = presets.map(([key, preset]) => {
                         const rolesText = preset.roles.map(r => `${r.emoji} ${r.name}`).join(', ');
                         return `
-                            <div class="preset-card" onclick="selectPreset('${key}', '${preset.name}')">
-                                <div class="preset-name">${preset.name}</div>
+                            <div class="preset-card">
+                                <div class="preset-card-header">
+                                    <div class="preset-name">${preset.name}</div>
+                                </div>
                                 <div class="preset-desc">${preset.description}</div>
+                                <div style="margin: 10px 0; font-size: 12px; color: var(--text-muted);">
+                                    <strong>ID:</strong> <code style="background: var(--discord-gray); padding: 2px 6px; border-radius: 3px;">${key}</code>
+                                </div>
                                 <div class="preset-meta">
                                     <span>⏱️ ${preset.duration} min</span>
                                     <span>👥 ${preset.maxParticipants || 'Unlimited'}</span>
                                 </div>
                                 <div style="margin-top: 10px; font-size: 12px; color: var(--text-muted);">${rolesText}</div>
+                                <div class="preset-actions">
+                                    <button class="btn btn-primary btn-small" onclick="selectPreset('${key}', '${preset.name.replace(/'/g, "\\'")}')" style="flex: 1;">
+                                        ✨ Use Preset
+                                    </button>
+                                    <button class="btn btn-danger btn-small" onclick="deletePresetFromList('${key}', '${preset.name.replace(/'/g, "\\'")}')">
+                                        🗑️ Delete
+                                    </button>
+                                </div>
                             </div>
                         `;
                     }).join('');
@@ -1017,7 +1046,6 @@
                     resetPresetForm();
                     loadPresets();
                     loadStats();
-                    loadPresetManagement();
                 } else {
                     showAlert('createPresetAlert', 'Error: ' + data.error, 'error');
                 }
@@ -1038,47 +1066,11 @@
             `;
         }
 
-        async function loadPresetManagement() {
-            try {
-                const response = await fetch(`${API_URL}/presets`);
-                const data = await response.json();
-                
-                const container = document.getElementById('presetManagementList');
-                
-                if (!data.success || Object.keys(data.presets).length === 0) {
-                    container.innerHTML = '<p style="color: var(--text-muted); text-align: center; padding: 20px;">No custom presets yet. Create your first one above!</p>';
-                    return;
-                }
-
-                container.innerHTML = Object.entries(data.presets).map(([key, preset]) => `
-                    <div class="preset-card" style="margin-bottom: 15px; padding: 15px; background: var(--discord-gray); border-radius: 6px;">
-                        <div style="display: flex; justify-content: space-between; align-items: start;">
-                            <div style="flex: 1;">
-                                <h4 style="margin: 0 0 5px 0; color: var(--discord-blurple);">${preset.name}</h4>
-                                <p style="margin: 0 0 10px 0; color: var(--text-secondary); font-size: 13px;">ID: <code>${key}</code></p>
-                                <p style="margin: 0 0 10px 0; color: var(--text-muted); font-size: 14px;">${preset.description || 'No description'}</p>
-                                <div style="display: flex; gap: 15px; font-size: 13px; color: var(--text-secondary);">
-                                    <span>⏱️ ${preset.duration} min</span>
-                                    <span>👥 ${preset.maxParticipants || 'Unlimited'}</span>
-                                    <span>🎮 ${preset.roles.length} roles</span>
-                                </div>
-                                <div style="margin-top: 10px; display: flex; gap: 8px; flex-wrap: wrap;">
-                                    ${preset.roles.map(role => `
-                                        <span class="role-badge">${role.emoji} ${role.name} (${role.maxSlots || '∞'})</span>
-                                    `).join('')}
-                                </div>
-                            </div>
-                            <button class="btn btn-danger" onclick="deletePreset('${key}', '${preset.name}')" style="margin-left: 15px;">Delete</button>
-                        </div>
-                    </div>
-                `).join('');
-            } catch (error) {
-                console.error('Failed to load preset management:', error);
-            }
-        }
-
-        async function deletePreset(key, name) {
-            if (!confirm(`Are you sure you want to delete the preset "${name}"?\n\nThis cannot be undone, but events already created with this preset will not be affected.`)) {
+        async function deletePresetFromList(key, name) {
+            // Unescape the name if it was escaped
+            const displayName = name.replace(/\\'/g, "'");
+            
+            if (!confirm(`Are you sure you want to delete the preset "${displayName}"?\n\nThis cannot be undone, but events already created with this preset will not be affected.`)) {
                 return;
             }
 
@@ -1090,15 +1082,14 @@
                 const data = await response.json();
 
                 if (data.success) {
-                    showAlert('createPresetAlert', `Preset "${name}" deleted successfully`, 'success');
+                    showAlert('presetsAlert', `Preset "${displayName}" deleted successfully`, 'success');
                     loadPresets();
                     loadStats();
-                    loadPresetManagement();
                 } else {
-                    alert('Error deleting preset: ' + data.error);
+                    showAlert('presetsAlert', 'Error deleting preset: ' + data.error, 'error');
                 }
             } catch (error) {
-                alert('Failed to delete preset: ' + error.message);
+                showAlert('presetsAlert', 'Failed to delete preset: ' + error.message, 'error');
             }
         }
 

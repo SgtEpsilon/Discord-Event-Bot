@@ -1,4 +1,4 @@
-const { Client, GatewayIntentBits, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ModalBuilder, TextInputBuilder, TextInputStyle, PermissionFlagsBits } = require('discord.js');
+const { Client, GatewayIntentBits, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, PermissionFlagsBits, REST, Routes, SlashCommandBuilder } = require('discord.js');
 const { google } = require('googleapis');
 const fs = require('fs');
 const path = require('path');
@@ -16,18 +16,15 @@ const config = {
 };
 
 // Parse calendar IDs (supports multiple calendars)
-// Format: "Name1:id1,Name2:id2" or "id1,id2" or "primary"
 function parseCalendarIds(calendarIdsString) {
     const calendars = [];
     const parts = calendarIdsString.split(',').map(s => s.trim()).filter(s => s);
     
     parts.forEach((part, index) => {
         if (part.includes(':')) {
-            // Format: "Name:calendar_id"
             const [name, id] = part.split(':').map(s => s.trim());
             calendars.push({ name, id });
         } else {
-            // Format: "calendar_id" (no name provided)
             calendars.push({ 
                 name: parts.length === 1 ? 'Calendar' : `Calendar ${index + 1}`, 
                 id: part 
@@ -62,23 +59,20 @@ let autoSyncInterval = null;
 let autoSyncChannelId = null;
 let autoSyncGuildId = null;
 
-// Start auto-sync (runs every hour)
+// Start auto-sync
 function startAutoSync(channelId, guildId) {
     autoSyncChannelId = channelId;
     autoSyncGuildId = guildId;
     
-    // Run immediately
     syncFromGoogleCalendar(channelId, guildId).then(result => {
         console.log(`[AutoSync] Initial sync: ${result.message}`);
     });
 
-    // Then every hour
     autoSyncInterval = setInterval(async () => {
         console.log('[AutoSync] Running scheduled sync...');
         const result = await syncFromGoogleCalendar(channelId, guildId);
         
         if (result.success && result.events.length > 0) {
-            // Post new events to Discord
             const channel = await client.channels.fetch(channelId);
             for (const event of result.events) {
                 const eventEmbed = createEventEmbed(event);
@@ -94,7 +88,7 @@ function startAutoSync(channelId, guildId) {
             saveEvents();
             console.log(`[AutoSync] ✅ Posted ${result.events.length} new events`);
         }
-    }, 60 * 60 * 1000); // Every hour
+    }, 60 * 60 * 1000);
 
     console.log('[AutoSync] ✅ Auto-sync enabled');
 }
@@ -123,28 +117,25 @@ function saveEvents() {
 
 // Helper function to parse DD-MM-YYYY HH:MM format
 function parseDateTime(dateTimeStr) {
-    // Expected format: DD-MM-YYYY HH:MM or DD-MM-YYYY HH:MM AM/PM
     const parts = dateTimeStr.trim().split(' ');
     
     if (parts.length < 2) {
         return null;
     }
     
-    const datePart = parts[0]; // DD-MM-YYYY
-    const timePart = parts[1]; // HH:MM
-    const meridiem = parts[2]?.toUpperCase(); // AM/PM (optional)
+    const datePart = parts[0];
+    const timePart = parts[1];
+    const meridiem = parts[2]?.toUpperCase();
     
-    // Split date: DD-MM-YYYY
     const dateComponents = datePart.split('-');
     if (dateComponents.length !== 3) {
         return null;
     }
     
     const day = parseInt(dateComponents[0]);
-    const month = parseInt(dateComponents[1]) - 1; // Months are 0-indexed
+    const month = parseInt(dateComponents[1]) - 1;
     const year = parseInt(dateComponents[2]);
     
-    // Split time: HH:MM
     const timeComponents = timePart.split(':');
     if (timeComponents.length !== 2) {
         return null;
@@ -153,7 +144,6 @@ function parseDateTime(dateTimeStr) {
     let hours = parseInt(timeComponents[0]);
     const minutes = parseInt(timeComponents[1]);
     
-    // Handle AM/PM
     if (meridiem) {
         if (meridiem === 'PM' && hours < 12) {
             hours += 12;
@@ -162,10 +152,8 @@ function parseDateTime(dateTimeStr) {
         }
     }
     
-    // Create date object
     const dateTime = new Date(year, month, day, hours, minutes);
     
-    // Validate the date
     if (isNaN(dateTime.getTime())) {
         return null;
     }
@@ -173,7 +161,7 @@ function parseDateTime(dateTimeStr) {
     return dateTime;
 }
 
-// Helper function to format date for display (DD-MM-YYYY HH:MM AM/PM)
+// Helper function to format date for display
 function formatDateTime(dateTimeStr) {
     const date = new Date(dateTimeStr);
     
@@ -186,7 +174,7 @@ function formatDateTime(dateTimeStr) {
     const meridiem = hours >= 12 ? 'PM' : 'AM';
     
     hours = hours % 12;
-    hours = hours ? hours : 12; // Convert 0 to 12
+    hours = hours ? hours : 12;
     
     return `${day}-${month}-${year} ${hours}:${minutes} ${meridiem}`;
 }
@@ -204,10 +192,8 @@ async function syncFromGoogleCalendar(channelId, guildId, hoursAhead = 168, cale
 
         const importedEvents = [];
         
-        // Determine which calendars to sync from
         let calendarsToSync = config.calendars;
         if (calendarFilter) {
-            // Filter by calendar name or ID
             calendarsToSync = config.calendars.filter(cal => 
                 cal.name.toLowerCase().includes(calendarFilter.toLowerCase()) ||
                 cal.id.toLowerCase().includes(calendarFilter.toLowerCase())
@@ -223,9 +209,7 @@ async function syncFromGoogleCalendar(channelId, guildId, hoursAhead = 168, cale
         }
 
         console.log(`[Sync] Syncing from ${calendarsToSync.length} calendar(s): ${calendarsToSync.map(c => c.name).join(', ')}`);
-        console.log(`[Sync] Time range: ${now.toISOString()} to ${futureDate.toISOString()}`);
 
-        // Fetch events from each calendar
         for (const cal of calendarsToSync) {
             console.log(`[Sync] Fetching events from "${cal.name}" (${cal.id})`);
             
@@ -242,13 +226,11 @@ async function syncFromGoogleCalendar(channelId, guildId, hoursAhead = 168, cale
                 console.log(`[Sync] Found ${calendarEvents.length} events in "${cal.name}"`);
 
                 for (const calEvent of calendarEvents) {
-                    // Skip events that don't have a start time
                     if (!calEvent.start || !calEvent.start.dateTime) {
                         console.log(`[Sync] Skipping all-day event: ${calEvent.summary}`);
                         continue;
                     }
 
-                    // Check if event already exists
                     const existingEvent = Object.values(events).find(e => 
                         e.calendarEventId === calEvent.id ||
                         e.calendarSourceId === cal.id + '_' + calEvent.id
@@ -259,12 +241,10 @@ async function syncFromGoogleCalendar(channelId, guildId, hoursAhead = 168, cale
                         continue;
                     }
 
-                    // Calculate duration
                     const startTime = new Date(calEvent.start.dateTime);
                     const endTime = new Date(calEvent.end.dateTime);
                     const durationMinutes = Math.round((endTime - startTime) / 1000 / 60);
 
-                    // Create Discord event
                     const eventId = `event_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
                     const newEvent = {
                         id: eventId,
@@ -279,8 +259,8 @@ async function syncFromGoogleCalendar(channelId, guildId, hoursAhead = 168, cale
                         channelId: channelId,
                         guildId: guildId,
                         calendarEventId: calEvent.id,
-                        calendarSourceId: cal.id + '_' + calEvent.id, // Unique ID per calendar
-                        calendarSource: cal.name, // Store which calendar it came from
+                        calendarSourceId: cal.id + '_' + calEvent.id,
+                        calendarSource: cal.name,
                         calendarLink: calEvent.htmlLink
                     };
 
@@ -290,7 +270,6 @@ async function syncFromGoogleCalendar(channelId, guildId, hoursAhead = 168, cale
                 }
             } catch (error) {
                 console.error(`[Sync] Error fetching from "${cal.name}": ${error.message}`);
-                // Continue with other calendars even if one fails
             }
         }
 
@@ -358,9 +337,8 @@ function createEventEmbed(event) {
             { name: '👥 Max Participants', value: event.maxParticipants ? event.maxParticipants.toString() : 'Unlimited', inline: true }
         );
 
-    // Add Discord timestamp (automatically converts to user's timezone)
-    const discordTimestamp = `<t:${unixTimestamp}:F>`; // Full date/time
-    const relativeTime = `<t:${unixTimestamp}:R>`; // Relative (e.g., "in 2 hours")
+    const discordTimestamp = `<t:${unixTimestamp}:F>`;
+    const relativeTime = `<t:${unixTimestamp}:R>`;
     
     embed.addFields({
         name: '🌍 Your Time',
@@ -368,11 +346,9 @@ function createEventEmbed(event) {
         inline: false
     });
 
-    // Add roles section
     if (event.roles && event.roles.length > 0) {
         event.roles.forEach(role => {
             const signedUp = event.signups[role.name] || [];
-            const spotsLeft = role.maxSlots ? role.maxSlots - signedUp.length : '∞';
             const userList = signedUp.length > 0 
                 ? signedUp.map(userId => `<@${userId}>`).join(', ')
                 : 'None yet';
@@ -389,7 +365,6 @@ function createEventEmbed(event) {
         embed.addFields({ name: '🔗 Google Calendar', value: `[View in Calendar](${event.calendarLink})`, inline: false });
     }
 
-    // Footer with event ID and Unix timestamp
     let footerText = `Event ID: ${event.id}`;
     if (event.calendarSource) {
         footerText += ` | From: ${event.calendarSource}`;
@@ -429,7 +404,6 @@ function createSignupButtons(event) {
         }
     });
 
-    // Add leave button
     const leaveButton = new ButtonBuilder()
         .setCustomId(`leave_${event.id}`)
         .setLabel('❌ Leave Event')
@@ -465,9 +439,8 @@ async function createGoogleCalendarEvent(event) {
             },
         };
 
-        // Use the first calendar for Discord → Calendar sync
         const targetCalendar = config.calendars[0];
-        console.log(`[Calendar] Creating event "${event.title}" in calendar: ${targetCalendar.name} (${targetCalendar.id})`);
+        console.log(`[Calendar] Creating event "${event.title}" in calendar: ${targetCalendar.name}`);
         
         const response = await calendar.events.insert({
             calendarId: targetCalendar.id,
@@ -478,13 +451,151 @@ async function createGoogleCalendarEvent(event) {
         return response.data.htmlLink;
     } catch (error) {
         console.error('[Calendar] ❌ Error creating event:', error.message);
-        if (error.message.includes('Not Found')) {
-            console.error('[Calendar] Check: 1) Calendar ID is correct, 2) Calendar is shared with service account');
-            console.error(`[Calendar] Current calendar ID: ${config.calendars[0].id}`);
-        } else if (error.message.includes('Forbidden') || error.message.includes('Permission')) {
-            console.error('[Calendar] Check: Service account has "Make changes to events" permission');
-        }
         return null;
+    }
+}
+
+// Define slash commands
+const commands = [
+    new SlashCommandBuilder()
+        .setName('create')
+        .setDescription('Create a new event')
+        .addStringOption(option =>
+            option.setName('title')
+                .setDescription('Event title')
+                .setRequired(true))
+        .addStringOption(option =>
+            option.setName('datetime')
+                .setDescription('Date and time (DD-MM-YYYY HH:MM or DD-MM-YYYY HH:MM AM/PM)')
+                .setRequired(true))
+        .addStringOption(option =>
+            option.setName('description')
+                .setDescription('Event description')
+                .setRequired(false))
+        .addIntegerOption(option =>
+            option.setName('duration')
+                .setDescription('Duration in minutes')
+                .setRequired(false))
+        .addIntegerOption(option =>
+            option.setName('max_participants')
+                .setDescription('Maximum participants (0 for unlimited)')
+                .setRequired(false)),
+
+    new SlashCommandBuilder()
+        .setName('preset')
+        .setDescription('Create an event from a preset')
+        .addStringOption(option =>
+            option.setName('preset_name')
+                .setDescription('Name of the preset')
+                .setRequired(true)
+                .setAutocomplete(true))
+        .addStringOption(option =>
+            option.setName('datetime')
+                .setDescription('Date and time (DD-MM-YYYY HH:MM or DD-MM-YYYY HH:MM AM/PM)')
+                .setRequired(true))
+        .addStringOption(option =>
+            option.setName('custom_description')
+                .setDescription('Custom description (optional)')
+                .setRequired(false)),
+
+    new SlashCommandBuilder()
+        .setName('presets')
+        .setDescription('List all available event presets'),
+
+    new SlashCommandBuilder()
+        .setName('addrole')
+        .setDescription('Add a signup role to an event')
+        .addStringOption(option =>
+            option.setName('event_id')
+                .setDescription('Event ID')
+                .setRequired(true))
+        .addStringOption(option =>
+            option.setName('emoji')
+                .setDescription('Role emoji')
+                .setRequired(true))
+        .addStringOption(option =>
+            option.setName('role_name')
+                .setDescription('Role name')
+                .setRequired(true))
+        .addIntegerOption(option =>
+            option.setName('max_slots')
+                .setDescription('Maximum slots for this role')
+                .setRequired(false)),
+
+    new SlashCommandBuilder()
+        .setName('list')
+        .setDescription('List all events'),
+
+    new SlashCommandBuilder()
+        .setName('delete')
+        .setDescription('Delete an event')
+        .addStringOption(option =>
+            option.setName('event_id')
+                .setDescription('Event ID to delete')
+                .setRequired(true)),
+
+    new SlashCommandBuilder()
+        .setName('sync')
+        .setDescription('Sync events from Google Calendar')
+        .addStringOption(option =>
+            option.setName('calendar_filter')
+                .setDescription('Filter by calendar name (optional)')
+                .setRequired(false)),
+
+    new SlashCommandBuilder()
+        .setName('calendars')
+        .setDescription('List configured calendars'),
+
+    new SlashCommandBuilder()
+        .setName('eventinfo')
+        .setDescription('Show detailed event information')
+        .addStringOption(option =>
+            option.setName('event_id')
+                .setDescription('Event ID')
+                .setRequired(true)),
+
+    new SlashCommandBuilder()
+        .setName('autosync')
+        .setDescription('Manage automatic calendar syncing')
+        .addStringOption(option =>
+            option.setName('action')
+                .setDescription('Action to perform')
+                .setRequired(false)
+                .addChoices(
+                    { name: 'Enable', value: 'on' },
+                    { name: 'Disable', value: 'off' },
+                    { name: 'Status', value: 'status' }
+                )),
+
+    new SlashCommandBuilder()
+        .setName('help')
+        .setDescription('Show bot commands and help'),
+
+    new SlashCommandBuilder()
+        .setName('deletepreset')
+        .setDescription('Delete a custom preset')
+        .addStringOption(option =>
+            option.setName('preset_name')
+                .setDescription('Name of the preset to delete')
+                .setRequired(true)
+                .setAutocomplete(true)),
+];
+
+// Register slash commands
+async function registerCommands(clientId) {
+    const rest = new REST({ version: '10' }).setToken(config.token);
+    
+    try {
+        console.log('🔄 Registering slash commands...');
+        
+        await rest.put(
+            Routes.applicationCommands(clientId),
+            { body: commands },
+        );
+        
+        console.log('✅ Slash commands registered successfully!');
+    } catch (error) {
+        console.error('❌ Error registering slash commands:', error);
     }
 }
 
@@ -492,6 +603,9 @@ async function createGoogleCalendarEvent(event) {
 client.once('ready', async () => {
     console.log(`✅ ${client.user.tag} is online!`);
     console.log(`🔗 Google Calendar: ${calendar ? 'Connected' : 'Not configured'}`);
+    
+    // Register slash commands
+    await registerCommands(client.user.id);
     
     // Test calendar connection if configured
     if (calendar) {
@@ -504,128 +618,111 @@ client.once('ready', async () => {
                 console.log(`[Calendar] ✅ "${cal.name}" - Successfully connected`);
             } catch (error) {
                 console.error(`[Calendar] ❌ "${cal.name}" - Failed: ${error.message}`);
-                if (error.message.includes('Not Found')) {
-                    console.error(`[Calendar] Calendar "${cal.id}" not found or not shared with service account`);
-                    console.error(`[Calendar] To fix:`);
-                    console.error(`[Calendar]   1. Check CALENDAR_IDS in .env is correct`);
-                    console.error(`[Calendar]   2. Share calendar with: ${config.googleCredentials ? JSON.parse(config.googleCredentials).client_email : 'service account email'}`);
-                }
             }
         }
     }
 });
 
-// Message command handler
-client.on('messageCreate', async (message) => {
-    if (message.author.bot) return;
-    if (!message.content.startsWith('!')) return;
+// Handle autocomplete for presets
+client.on('interactionCreate', async interaction => {
+    if (!interaction.isAutocomplete()) return;
+    
+    if (interaction.commandName === 'preset' || interaction.commandName === 'deletepreset') {
+        const focusedValue = interaction.options.getFocused();
+        const choices = Object.keys(presets).filter(choice =>
+            choice.toLowerCase().includes(focusedValue.toLowerCase())
+        );
+        
+        await interaction.respond(
+            choices.slice(0, 25).map(choice => ({ name: choice, value: choice }))
+        );
+    }
+});
 
-    const args = message.content.slice(1).trim().split(/ +/);
-    const command = args.shift().toLowerCase();
+// Handle slash commands
+client.on('interactionCreate', async interaction => {
+    if (!interaction.isChatInputCommand()) return;
 
-    // !create - Create a new event
-    if (command === 'create') {
-        if (!message.member.permissions.has(PermissionFlagsBits.ManageEvents)) {
-            return message.reply('❌ You need "Manage Events" permission to create events.');
+    const { commandName } = interaction;
+
+    // /create
+    if (commandName === 'create') {
+        if (!interaction.memberPermissions.has(PermissionFlagsBits.ManageEvents)) {
+            return interaction.reply({ content: '❌ You need "Manage Events" permission to create events.', ephemeral: true });
+        }
+
+        const title = interaction.options.getString('title');
+        const dateTimeStr = interaction.options.getString('datetime');
+        const description = interaction.options.getString('description') || '';
+        const duration = interaction.options.getInteger('duration') || 60;
+        const maxParticipants = interaction.options.getInteger('max_participants') || 0;
+
+        const dateTime = parseDateTime(dateTimeStr);
+        
+        if (!dateTime) {
+            return interaction.reply({ 
+                content: '❌ Invalid date format. Use: DD-MM-YYYY HH:MM or DD-MM-YYYY HH:MM AM/PM\nExample: 15-02-2026 20:00 or 15-02-2026 08:00 PM', 
+                ephemeral: true 
+            });
         }
 
         const eventId = `event_${Date.now()}`;
-        const embed = new EmbedBuilder()
-            .setTitle('📝 Create New Event')
-            .setDescription('Use the following format to create an event:\n\n`!create <title> | <date-time> | <description> | <duration-minutes> | <max-participants>`\n\nExample:\n`!create Raid Night | 15-02-2026 20:00 | Weekly raid | 120 | 20`\n\nDate format: DD-MM-YYYY HH:MM or DD-MM-YYYY HH:MM AM/PM\n\nOr use: `!preset <preset-name> <date-time>` for quick setup\nSee `!presets` for available templates')
-            .setColor(0x5865F2);
+        const newEvent = {
+            id: eventId,
+            title,
+            description,
+            dateTime: dateTime.toISOString(),
+            duration,
+            maxParticipants,
+            roles: [],
+            signups: {},
+            createdBy: interaction.user.id,
+            channelId: interaction.channel.id,
+            guildId: interaction.guild.id
+        };
 
-        if (args.length >= 2) {
-            const parts = args.join(' ').split('|').map(p => p.trim());
-            
-            if (parts.length < 2) {
-                return message.reply({ embeds: [embed] });
+        events[eventId] = newEvent;
+        saveEvents();
+
+        if (calendar) {
+            const calendarLink = await createGoogleCalendarEvent(newEvent);
+            if (calendarLink) {
+                newEvent.calendarLink = calendarLink;
+                saveEvents();
             }
-
-            const [title, dateTimeStr, description = '', durationStr = '60', maxParticipantsStr = '0'] = parts;
-            const dateTime = parseDateTime(dateTimeStr);
-            
-            if (!dateTime) {
-                return message.reply('❌ Invalid date format. Use: DD-MM-YYYY HH:MM or DD-MM-YYYY HH:MM AM/PM\nExample: 15-02-2026 20:00 or 15-02-2026 08:00 PM');
-            }
-
-            const newEvent = {
-                id: eventId,
-                title,
-                description,
-                dateTime: dateTime.toISOString(),
-                duration: parseInt(durationStr) || 60,
-                maxParticipants: parseInt(maxParticipantsStr) || 0,
-                roles: [],
-                signups: {},
-                createdBy: message.author.id,
-                channelId: message.channel.id,
-                guildId: message.guild.id
-            };
-
-            events[eventId] = newEvent;
-            saveEvents();
-
-            // Create in Google Calendar
-            if (calendar) {
-                const calendarLink = await createGoogleCalendarEvent(newEvent);
-                if (calendarLink) {
-                    newEvent.calendarLink = calendarLink;
-                    saveEvents();
-                }
-            }
-
-            const eventEmbed = createEventEmbed(newEvent);
-            const sentMessage = await message.channel.send({ embeds: [eventEmbed] });
-            
-            newEvent.messageId = sentMessage.id;
-            saveEvents();
-
-            message.reply(`✅ Event created! Use \`!addrole ${eventId} <emoji> <role-name> <max-slots>\` to add signup roles.`);
-        } else {
-            message.reply({ embeds: [embed] });
         }
+
+        const eventEmbed = createEventEmbed(newEvent);
+        const sentMessage = await interaction.channel.send({ embeds: [eventEmbed] });
+        
+        newEvent.messageId = sentMessage.id;
+        saveEvents();
+
+        await interaction.reply({ content: `✅ Event created! Use \`/addrole event_id:${eventId}\` to add signup roles.`, ephemeral: true });
     }
 
-    // !preset - Create an event from a preset template
-    if (command === 'preset') {
-        if (!message.member.permissions.has(PermissionFlagsBits.ManageEvents)) {
-            return message.reply('❌ You need "Manage Events" permission to create events.');
+    // /preset
+    if (commandName === 'preset') {
+        if (!interaction.memberPermissions.has(PermissionFlagsBits.ManageEvents)) {
+            return interaction.reply({ content: '❌ You need "Manage Events" permission to create events.', ephemeral: true });
         }
 
-        if (args.length < 2) {
-            return message.reply('Usage: `!preset <preset-name> <date-time> [custom-description]`\nExample: `!preset overwatch 15-02-2026 20:00 Competitive night`\nDate format: DD-MM-YYYY HH:MM or DD-MM-YYYY HH:MM AM/PM\n\nUse `!presets` to see all available presets.');
-        }
-
-        const presetName = args[0].toLowerCase();
-        
-        // Find where the date starts (could be args[1] or args[1] + args[2] if it has AM/PM)
-        let dateTimeStr = '';
-        let descriptionStartIndex = 2;
-        
-        // Check if args[3] is AM or PM (meaning time is in args[2])
-        if (args[3] && (args[3].toUpperCase() === 'AM' || args[3].toUpperCase() === 'PM')) {
-            dateTimeStr = `${args[1]} ${args[2]} ${args[3]}`;
-            descriptionStartIndex = 4;
-        } else if (args[2] && (args[2].toUpperCase() === 'AM' || args[2].toUpperCase() === 'PM')) {
-            dateTimeStr = `${args[1]} ${args[2]}`;
-            descriptionStartIndex = 3;
-        } else {
-            dateTimeStr = `${args[1]} ${args[2] || ''}`;
-            descriptionStartIndex = 3;
-        }
-        
-        const customDescription = args.slice(descriptionStartIndex).join(' ');
+        const presetName = interaction.options.getString('preset_name').toLowerCase();
+        const dateTimeStr = interaction.options.getString('datetime');
+        const customDescription = interaction.options.getString('custom_description');
 
         if (!presets[presetName]) {
-            return message.reply(`❌ Preset "${presetName}" not found. Use \`!presets\` to see available presets.`);
+            return interaction.reply({ content: `❌ Preset "${presetName}" not found. Use \`/presets\` to see available presets.`, ephemeral: true });
         }
 
         const preset = presets[presetName];
         const dateTime = parseDateTime(dateTimeStr);
 
         if (!dateTime) {
-            return message.reply('❌ Invalid date format. Use: DD-MM-YYYY HH:MM or DD-MM-YYYY HH:MM AM/PM\nExample: `!preset overwatch 15-02-2026 20:00` or `!preset overwatch 15-02-2026 08:00 PM`');
+            return interaction.reply({ 
+                content: '❌ Invalid date format. Use: DD-MM-YYYY HH:MM or DD-MM-YYYY HH:MM AM/PM\nExample: 15-02-2026 20:00 or 15-02-2026 08:00 PM', 
+                ephemeral: true 
+            });
         }
 
         const eventId = `event_${Date.now()}`;
@@ -636,14 +733,13 @@ client.on('messageCreate', async (message) => {
             dateTime: dateTime.toISOString(),
             duration: preset.duration,
             maxParticipants: preset.maxParticipants,
-            roles: JSON.parse(JSON.stringify(preset.roles)), // Deep copy
+            roles: JSON.parse(JSON.stringify(preset.roles)),
             signups: {},
-            createdBy: message.author.id,
-            channelId: message.channel.id,
-            guildId: message.guild.id
+            createdBy: interaction.user.id,
+            channelId: interaction.channel.id,
+            guildId: interaction.guild.id
         };
 
-        // Initialize signups for each role
         preset.roles.forEach(role => {
             newEvent.signups[role.name] = [];
         });
@@ -651,7 +747,6 @@ client.on('messageCreate', async (message) => {
         events[eventId] = newEvent;
         saveEvents();
 
-        // Create in Google Calendar
         if (calendar) {
             const calendarLink = await createGoogleCalendarEvent(newEvent);
             if (calendarLink) {
@@ -662,7 +757,7 @@ client.on('messageCreate', async (message) => {
 
         const eventEmbed = createEventEmbed(newEvent);
         const buttons = createSignupButtons(newEvent);
-        const sentMessage = await message.channel.send({ 
+        const sentMessage = await interaction.channel.send({ 
             embeds: [eventEmbed],
             components: buttons || []
         });
@@ -670,14 +765,14 @@ client.on('messageCreate', async (message) => {
         newEvent.messageId = sentMessage.id;
         saveEvents();
 
-        message.reply(`✅ ${preset.name} event created with preset roles!`);
+        await interaction.reply({ content: `✅ ${preset.name} event created with preset roles!`, ephemeral: true });
     }
 
-    // !presets - List all available presets
-    if (command === 'presets') {
+    // /presets
+    if (commandName === 'presets') {
         const embed = new EmbedBuilder()
             .setTitle('📋 Available Event Presets')
-            .setDescription('Use `!preset <name> <date-time>` to create an event from a preset')
+            .setDescription('Use `/preset` to create an event from a preset')
             .setColor(0x5865F2);
 
         const presetList = Object.entries(presets).map(([key, preset]) => {
@@ -686,7 +781,6 @@ client.on('messageCreate', async (message) => {
         }).join('\n\n');
 
         if (presetList.length > 4096) {
-            // Split into multiple embeds if too long
             const presetKeys = Object.keys(presets);
             const midpoint = Math.ceil(presetKeys.length / 2);
             
@@ -711,34 +805,29 @@ client.on('messageCreate', async (message) => {
                 .setTitle('📋 Available Event Presets (Part 2)')
                 .setDescription(secondHalf)
                 .setColor(0x5865F2)
-                .setFooter({ text: 'Use !preset <name> <date-time> to create an event' });
+                .setFooter({ text: 'Use /preset to create an event' });
 
-            message.reply({ embeds: [embed1, embed2] });
+            await interaction.reply({ embeds: [embed1, embed2], ephemeral: true });
         } else {
-            embed.setDescription(`Use \`!preset <name> <date-time>\` to create an event from a preset\n\n${presetList}`);
+            embed.setDescription(`Use \`/preset\` to create an event from a preset\n\n${presetList}`);
             embed.setFooter({ text: `${Object.keys(presets).length} presets available` });
-            message.reply({ embeds: [embed] });
+            await interaction.reply({ embeds: [embed], ephemeral: true });
         }
     }
 
-    // !addrole - Add a role to an event
-    if (command === 'addrole') {
-        if (!message.member.permissions.has(PermissionFlagsBits.ManageEvents)) {
-            return message.reply('❌ You need "Manage Events" permission to manage events.');
+    // /addrole
+    if (commandName === 'addrole') {
+        if (!interaction.memberPermissions.has(PermissionFlagsBits.ManageEvents)) {
+            return interaction.reply({ content: '❌ You need "Manage Events" permission to manage events.', ephemeral: true });
         }
 
-        // Format: !addrole <eventId> <emoji> <roleName> <maxSlots>
-        if (args.length < 3) {
-            return message.reply('Usage: `!addrole <eventId> <emoji> <role-name> <max-slots>`\nExample: `!addrole event_123 ⚔️ Tank 2`');
-        }
-
-        const [eventId, emoji, ...roleNameParts] = args;
-        const lastPart = roleNameParts[roleNameParts.length - 1];
-        const maxSlots = parseInt(lastPart);
-        const roleName = maxSlots ? roleNameParts.slice(0, -1).join(' ') : roleNameParts.join(' ');
+        const eventId = interaction.options.getString('event_id');
+        const emoji = interaction.options.getString('emoji');
+        const roleName = interaction.options.getString('role_name');
+        const maxSlots = interaction.options.getInteger('max_slots');
 
         if (!events[eventId]) {
-            return message.reply('❌ Event not found. Use `!list` to see all events.');
+            return interaction.reply({ content: '❌ Event not found. Use `/list` to see all events.', ephemeral: true });
         }
 
         const event = events[eventId];
@@ -755,7 +844,6 @@ client.on('messageCreate', async (message) => {
         event.signups[roleName] = [];
         saveEvents();
 
-        // Update the message
         const channel = await client.channels.fetch(event.channelId);
         if (channel && event.messageId) {
             const eventMessage = await channel.messages.fetch(event.messageId);
@@ -768,15 +856,15 @@ client.on('messageCreate', async (message) => {
             });
         }
 
-        message.reply(`✅ Role "${emoji} ${roleName}" added to event!`);
+        await interaction.reply({ content: `✅ Role "${emoji} ${roleName}" added to event!`, ephemeral: true });
     }
 
-    // !list - List all events
-    if (command === 'list') {
-        const guildEvents = Object.values(events).filter(e => e.guildId === message.guild.id);
+    // /list
+    if (commandName === 'list') {
+        const guildEvents = Object.values(events).filter(e => e.guildId === interaction.guild.id);
         
         if (guildEvents.length === 0) {
-            return message.reply('📭 No events found. Create one with `!create`');
+            return interaction.reply({ content: '📭 No events found. Create one with `/create`', ephemeral: true });
         }
 
         const embed = new EmbedBuilder()
@@ -792,71 +880,58 @@ client.on('messageCreate', async (message) => {
             });
         });
 
-        message.reply({ embeds: [embed] });
+        await interaction.reply({ embeds: [embed], ephemeral: true });
     }
 
-    // !delete - Delete an event
-    if (command === 'delete') {
-        if (!message.member.permissions.has(PermissionFlagsBits.ManageEvents)) {
-            return message.reply('❌ You need "Manage Events" permission to delete events.');
+    // /delete
+    if (commandName === 'delete') {
+        if (!interaction.memberPermissions.has(PermissionFlagsBits.ManageEvents)) {
+            return interaction.reply({ content: '❌ You need "Manage Events" permission to delete events.', ephemeral: true });
         }
 
-        const eventId = args[0];
-        if (!eventId || !events[eventId]) {
-            return message.reply('❌ Event not found. Usage: `!delete <eventId>`');
+        const eventId = interaction.options.getString('event_id');
+        
+        if (!events[eventId]) {
+            return interaction.reply({ content: '❌ Event not found.', ephemeral: true });
         }
 
         delete events[eventId];
         saveEvents();
-        message.reply('✅ Event deleted!');
+        await interaction.reply({ content: '✅ Event deleted!', ephemeral: true });
     }
 
-    // !sync - Sync events FROM Google Calendar
-    if (command === 'sync') {
-        if (!message.member.permissions.has(PermissionFlagsBits.ManageEvents)) {
-            return message.reply('❌ You need "Manage Events" permission to sync events.');
+    // /sync
+    if (commandName === 'sync') {
+        if (!interaction.memberPermissions.has(PermissionFlagsBits.ManageEvents)) {
+            return interaction.reply({ content: '❌ You need "Manage Events" permission to sync events.', ephemeral: true });
         }
 
         if (!calendar) {
-            return message.reply('❌ Google Calendar is not configured. Events cannot be synced.');
+            return interaction.reply({ content: '❌ Google Calendar is not configured. Events cannot be synced.', ephemeral: true });
         }
 
-        // Optional: filter by calendar name/ID
-        const calendarFilter = args.join(' ') || null;
+        const calendarFilter = interaction.options.getString('calendar_filter');
         
-        let syncMessage = '🔄 Syncing events from Google Calendar';
-        if (calendarFilter) {
-            syncMessage += ` (filtering: "${calendarFilter}")`;
-        }
-        syncMessage += '...';
-        
-        const loadingMsg = await message.reply(syncMessage);
+        await interaction.deferReply({ ephemeral: true });
 
-        const result = await syncFromGoogleCalendar(message.channel.id, message.guild.id, 168, calendarFilter);
+        const result = await syncFromGoogleCalendar(interaction.channel.id, interaction.guild.id, 168, calendarFilter);
 
         if (!result.success) {
-            return loadingMsg.edit(`❌ ${result.message}`);
+            return interaction.editReply(`❌ ${result.message}`);
         }
 
         if (result.events.length === 0) {
             const calendarsChecked = calendarFilter 
                 ? `calendar "${calendarFilter}"` 
                 : `${config.calendars.length} calendar(s)`;
-            return loadingMsg.edit(`✅ No new events to import from ${calendarsChecked}. All events are already synced!`);
+            return interaction.editReply(`✅ No new events to import from ${calendarsChecked}. All events are already synced!`);
         }
 
-        // Post imported events to Discord
         for (const event of result.events) {
             const eventEmbed = createEventEmbed(event);
-            
-            // Add calendar source to embed
-            if (event.calendarSource) {
-                eventEmbed.setFooter({ text: `Event ID: ${event.id} | From: ${event.calendarSource}` });
-            }
-            
             const buttons = createSignupButtons(event);
             
-            const sentMessage = await message.channel.send({ 
+            const sentMessage = await interaction.channel.send({ 
                 embeds: [eventEmbed],
                 components: buttons || []
             });
@@ -870,15 +945,15 @@ client.on('messageCreate', async (message) => {
         if (result.calendars && result.calendars.length > 0) {
             summaryParts.push(`\n📅 Calendars: ${result.calendars.join(', ')}`);
         }
-        summaryParts.push('\n\nEvents have been posted to this channel. Use `!addrole` to add signup roles if needed.');
+        summaryParts.push('\n\nEvents have been posted to this channel.');
         
-        loadingMsg.edit(summaryParts.join(''));
+        await interaction.editReply(summaryParts.join(''));
     }
 
-    // !calendars - List configured calendars
-    if (command === 'calendars') {
+    // /calendars
+    if (commandName === 'calendars') {
         if (!calendar) {
-            return message.reply('❌ Google Calendar is not configured.');
+            return interaction.reply({ content: '❌ Google Calendar is not configured.', ephemeral: true });
         }
 
         const embed = new EmbedBuilder()
@@ -889,22 +964,22 @@ client.on('messageCreate', async (message) => {
         config.calendars.forEach((cal, index) => {
             embed.addFields({
                 name: `${index + 1}. ${cal.name}`,
-                value: `ID: \`${cal.id}\`\nTo sync only this calendar: \`!sync ${cal.name}\``,
+                value: `ID: \`${cal.id}\`\nTo sync: \`/sync calendar_filter:${cal.name}\``,
                 inline: false
             });
         });
 
         embed.setFooter({ text: `${config.calendars.length} calendar(s) configured` });
 
-        message.reply({ embeds: [embed] });
+        await interaction.reply({ embeds: [embed], ephemeral: true });
     }
 
-    // !eventinfo - Show detailed event information with timezone conversions
-    if (command === 'eventinfo') {
-        const eventId = args[0];
+    // /eventinfo
+    if (commandName === 'eventinfo') {
+        const eventId = interaction.options.getString('event_id');
         
-        if (!eventId || !events[eventId]) {
-            return message.reply('❌ Event not found. Usage: `!eventinfo <eventId>`\n\nGet the event ID from the event embed footer or use `!list`');
+        if (!events[eventId]) {
+            return interaction.reply({ content: '❌ Event not found. Get the event ID from `/list`', ephemeral: true });
         }
 
         const event = events[eventId];
@@ -918,25 +993,16 @@ client.on('messageCreate', async (message) => {
             .addFields(
                 { name: '📅 Original Format', value: formatDateTime(event.dateTime), inline: false },
                 { name: '🌍 Discord Timestamps', value: `**Full:** <t:${unixTimestamp}:F>\n**Date:** <t:${unixTimestamp}:D>\n**Time:** <t:${unixTimestamp}:t>\n**Relative:** <t:${unixTimestamp}:R>`, inline: false },
-                { name: '🔢 Unix Timestamp', value: `\`${unixTimestamp}\`\n[Copyable for sharing]`, inline: false },
-                { name: '🔗 Share This Event', value: `Send this to anyone:\n\`Event at <t:${unixTimestamp}:F>\`\n\nOr use: \`!eventinfo ${eventId}\``, inline: false }
+                { name: '🔢 Unix Timestamp', value: `\`${unixTimestamp}\``, inline: false }
             );
 
-        // Add signup info
         const totalSignups = Object.values(event.signups || {}).reduce((sum, arr) => sum + arr.length, 0);
-        embed.addFields({
-            name: '👥 Signups',
-            value: `${totalSignups} player(s) signed up`,
-            inline: true
-        });
-
-        // Add duration and max participants
         embed.addFields(
+            { name: '👥 Signups', value: `${totalSignups} player(s) signed up`, inline: true },
             { name: '⏱️ Duration', value: `${event.duration || 60} minutes`, inline: true },
             { name: '📊 Max Participants', value: event.maxParticipants ? event.maxParticipants.toString() : 'Unlimited', inline: true }
         );
 
-        // Add calendar info if available
         if (event.calendarLink) {
             embed.addFields({ name: '🔗 Google Calendar', value: `[View in Calendar](${event.calendarLink})`, inline: false });
         }
@@ -947,66 +1013,91 @@ client.on('messageCreate', async (message) => {
 
         embed.setFooter({ text: `Created by: ${event.createdBy === 'google_calendar' ? 'Google Calendar Import' : 'Discord User'}` });
 
-        message.reply({ embeds: [embed] });
+        await interaction.reply({ embeds: [embed], ephemeral: true });
     }
 
-    // !autosync - Toggle automatic sync from Google Calendar
-    if (command === 'autosync') {
-        if (!message.member.permissions.has(PermissionFlagsBits.ManageEvents)) {
-            return message.reply('❌ You need "Manage Events" permission to manage auto-sync.');
+    // /autosync
+    if (commandName === 'autosync') {
+        if (!interaction.memberPermissions.has(PermissionFlagsBits.ManageEvents)) {
+            return interaction.reply({ content: '❌ You need "Manage Events" permission to manage auto-sync.', ephemeral: true });
         }
 
         if (!calendar) {
-            return message.reply('❌ Google Calendar is not configured. Auto-sync cannot be enabled.');
+            return interaction.reply({ content: '❌ Google Calendar is not configured. Auto-sync cannot be enabled.', ephemeral: true });
         }
 
-        const subcommand = args[0]?.toLowerCase();
+        const action = interaction.options.getString('action') || 'status';
 
-        if (subcommand === 'on' || subcommand === 'enable') {
-            // Enable auto-sync
+        if (action === 'on') {
             if (!autoSyncInterval) {
-                startAutoSync(message.channel.id, message.guild.id);
-                return message.reply('✅ Auto-sync enabled! Events will be synced from Google Calendar every hour.');
+                startAutoSync(interaction.channel.id, interaction.guild.id);
+                return interaction.reply({ content: '✅ Auto-sync enabled! Events will be synced from Google Calendar every hour.', ephemeral: true });
             } else {
-                return message.reply('ℹ️ Auto-sync is already enabled.');
+                return interaction.reply({ content: 'ℹ️ Auto-sync is already enabled.', ephemeral: true });
             }
-        } else if (subcommand === 'off' || subcommand === 'disable') {
-            // Disable auto-sync
+        } else if (action === 'off') {
             if (autoSyncInterval) {
                 stopAutoSync();
-                return message.reply('✅ Auto-sync disabled.');
+                return interaction.reply({ content: '✅ Auto-sync disabled.', ephemeral: true });
             } else {
-                return message.reply('ℹ️ Auto-sync is already disabled.');
+                return interaction.reply({ content: 'ℹ️ Auto-sync is already disabled.', ephemeral: true });
             }
         } else {
-            // Show status
             const status = autoSyncInterval ? 'enabled ✅' : 'disabled ❌';
-            return message.reply(`Auto-sync is currently **${status}**\n\nUsage:\n\`!autosync on\` - Enable automatic syncing\n\`!autosync off\` - Disable automatic syncing`);
+            return interaction.reply({ content: `Auto-sync is currently **${status}**\n\nUse \`/autosync action:on\` to enable or \`/autosync action:off\` to disable.`, ephemeral: true });
         }
     }
 
-    // !help - Show help
-    if (command === 'help') {
+    // /help
+    if (commandName === 'help') {
         const embed = new EmbedBuilder()
             .setTitle('🤖 Event Bot Commands')
             .setDescription('Manage events with Google Calendar integration')
             .setColor(0x5865F2)
             .addFields(
-                { name: '!create', value: 'Create a new event\n`!create <title> | <date-time> | <description> | <duration> | <max-participants>`', inline: false },
-                { name: '!preset', value: 'Create event from preset template\n`!preset <preset-name> <date-time> [description]`\nExample: `!preset overwatch 15-02-2026 20:00`', inline: false },
-                { name: '!presets', value: 'List all available preset templates', inline: false },
-                { name: '!addrole', value: 'Add a signup role to an event\n`!addrole <eventId> <emoji> <role-name> <max-slots>`', inline: false },
-                { name: '!list', value: 'List all upcoming events', inline: false },
-                { name: '!eventinfo', value: 'Show detailed event info with timezones\n`!eventinfo <eventId>`', inline: false },
-                { name: '!delete', value: 'Delete an event\n`!delete <eventId>`', inline: false },
-                { name: '!sync', value: 'Import events from Google Calendar\n`!sync` - Sync all calendars\n`!sync <calendar-name>` - Sync specific calendar', inline: false },
-                { name: '!calendars', value: 'List all configured calendars', inline: false },
-                { name: '!autosync', value: 'Manage automatic calendar syncing\n`!autosync on` - Enable hourly sync\n`!autosync off` - Disable auto-sync\n`!autosync` - Check status', inline: false },
-                { name: '!help', value: 'Show this help message', inline: false }
+                { name: '/create', value: 'Create a new event with custom details', inline: false },
+                { name: '/preset', value: 'Create event from a preset template', inline: false },
+                { name: '/presets', value: 'List all available preset templates', inline: false },
+                { name: '/deletepreset', value: 'Delete a custom preset', inline: false },
+                { name: '/addrole', value: 'Add a signup role to an event', inline: false },
+                { name: '/list', value: 'List all upcoming events', inline: false },
+                { name: '/eventinfo', value: 'Show detailed event information with timezones', inline: false },
+                { name: '/delete', value: 'Delete an event', inline: false },
+                { name: '/sync', value: 'Import events from Google Calendar', inline: false },
+                { name: '/calendars', value: 'List all configured calendars', inline: false },
+                { name: '/autosync', value: 'Manage automatic calendar syncing', inline: false },
+                { name: '/help', value: 'Show this help message', inline: false }
             )
-            .setFooter({ text: `Event Bot v2.3 • ${Object.keys(presets).length} presets • ${config.calendars.length} calendar(s)` });
+            .setFooter({ text: `Event Bot v3.0 (Slash Commands) • ${Object.keys(presets).length} presets • ${config.calendars.length} calendar(s)` });
 
-        message.reply({ embeds: [embed] });
+        await interaction.reply({ embeds: [embed], ephemeral: true });
+    }
+
+    // /deletepreset
+    if (commandName === 'deletepreset') {
+        if (!interaction.memberPermissions.has(PermissionFlagsBits.ManageEvents)) {
+            return interaction.reply({ content: '❌ You need "Manage Events" permission to delete presets.', ephemeral: true });
+        }
+
+        const presetName = interaction.options.getString('preset_name').toLowerCase();
+
+        if (!presets[presetName]) {
+            return interaction.reply({ content: `❌ Preset "${presetName}" not found.`, ephemeral: true });
+        }
+
+        const presetDisplayName = presets[presetName].name;
+        delete presets[presetName];
+        
+        // Save updated presets
+        fs.writeFileSync(PRESETS_FILE, JSON.stringify(presets, null, 2));
+        
+        // Reload presets
+        presets = JSON.parse(fs.readFileSync(PRESETS_FILE, 'utf8'));
+
+        await interaction.reply({ 
+            content: `✅ Preset "${presetDisplayName}" (${presetName}) has been deleted.\n\n⚠️ Note: Events already created with this preset will not be affected.`, 
+            ephemeral: true 
+        });
     }
 });
 
@@ -1017,45 +1108,33 @@ client.on('interactionCreate', async (interaction) => {
     const customId = interaction.customId;
     console.log(`[Button Click] CustomId: "${customId}"`);
     
-    // Parse the customId properly
-    // Format: action_eventId_roleName
-    // Event IDs are like: event_1770470049678
-    // So customId looks like: signup_event_1770470049678_Tank
-    // Or: leave_event_1770470049678
-    
     let action, eventId, roleName;
     
     if (customId.startsWith('leave_')) {
-        // Format: leave_event_1770470049678
         action = 'leave';
-        eventId = customId.substring(6); // Remove "leave_"
+        eventId = customId.substring(6);
         roleName = null;
     } else if (customId.startsWith('signup_')) {
-        // Format: signup_event_1770470049678_RoleName
         action = 'signup';
-        const withoutAction = customId.substring(7); // Remove "signup_"
-        
-        // Now we have: event_1770470049678_RoleName
-        // Find the last underscore (which separates eventId from roleName)
+        const withoutAction = customId.substring(7);
         const lastUnderscore = withoutAction.lastIndexOf('_');
-        eventId = withoutAction.substring(0, lastUnderscore); // event_1770470049678
-        roleName = withoutAction.substring(lastUnderscore + 1); // RoleName
+        eventId = withoutAction.substring(0, lastUnderscore);
+        roleName = withoutAction.substring(lastUnderscore + 1);
     } else {
         console.error(`[ERROR] Unknown action in customId: ${customId}`);
         return interaction.reply({ 
             content: '❌ Invalid button action.', 
-            flags: 64 // EPHEMERAL flag
+            ephemeral: true
         });
     }
 
     console.log(`[Parse] Action: "${action}" | EventId: "${eventId}" | RoleName: "${roleName}"`);
-    console.log(`[Events] Available IDs: ${Object.keys(events).join(', ') || 'None'}`);
 
     if (!events[eventId]) {
         console.error(`[ERROR] Event "${eventId}" not found in events object`);
         return interaction.reply({ 
             content: '❌ Event not found. The event may have been deleted.', 
-            flags: 64 // EPHEMERAL flag
+            ephemeral: true
         });
     }
 
@@ -1065,41 +1144,35 @@ client.on('interactionCreate', async (interaction) => {
     if (action === 'signup') {
         const role = event.roles.find(r => r.name === roleName);
         if (!role) {
-            return interaction.reply({ content: '❌ Role not found.', flags: 64 });
+            return interaction.reply({ content: '❌ Role not found.', ephemeral: true });
         }
 
-        // Check if user is already signed up for this role
         if (event.signups[roleName]?.includes(interaction.user.id)) {
-            return interaction.reply({ content: `✅ You're already signed up as ${role.emoji} ${roleName}!`, flags: 64 });
+            return interaction.reply({ content: `✅ You're already signed up as ${role.emoji} ${roleName}!`, ephemeral: true });
         }
 
-        // Check if role is full
         if (role.maxSlots && event.signups[roleName]?.length >= role.maxSlots) {
-            return interaction.reply({ content: `❌ ${role.emoji} ${roleName} is full!`, flags: 64 });
+            return interaction.reply({ content: `❌ ${role.emoji} ${roleName} is full!`, ephemeral: true });
         }
 
-        // Remove user from other roles
         Object.keys(event.signups).forEach(r => {
             event.signups[r] = event.signups[r].filter(id => id !== interaction.user.id);
         });
 
-        // Add user to role
         if (!event.signups[roleName]) event.signups[roleName] = [];
         event.signups[roleName].push(interaction.user.id);
         saveEvents();
 
-        // Update the message
         const updatedEmbed = createEventEmbed(event);
         const buttons = createSignupButtons(event);
         await interaction.update({ embeds: [updatedEmbed], components: buttons || [] });
 
-        await interaction.followUp({ content: `✅ Signed up as ${role.emoji} ${roleName}!`, flags: 64 });
+        await interaction.followUp({ content: `✅ Signed up as ${role.emoji} ${roleName}!`, ephemeral: true });
     }
 
     if (action === 'leave') {
         let wasSignedUp = false;
         
-        // Remove user from all roles
         Object.keys(event.signups).forEach(r => {
             const initialLength = event.signups[r].length;
             event.signups[r] = event.signups[r].filter(id => id !== interaction.user.id);
@@ -1107,22 +1180,21 @@ client.on('interactionCreate', async (interaction) => {
         });
 
         if (!wasSignedUp) {
-            return interaction.reply({ content: '❌ You were not signed up for this event.', flags: 64 });
+            return interaction.reply({ content: '❌ You were not signed up for this event.', ephemeral: true });
         }
 
         saveEvents();
 
-        // Update the message
         const updatedEmbed = createEventEmbed(event);
         const buttons = createSignupButtons(event);
         await interaction.update({ embeds: [updatedEmbed], components: buttons || [] });
 
-        await interaction.followUp({ content: '✅ You have left the event.', flags: 64 });
+        await interaction.followUp({ content: '✅ You have left the event.', ephemeral: true });
     }
 });
 
 // Login
 client.login(config.token).catch(error => {
     console.error('Failed to login:', error.message);
-    console.log('\n⚠️  Please set your Discord bot token in the config.json file or DISCORD_TOKEN environment variable');
+    console.log('\n⚠️  Please set your Discord bot token in the .env file');
 });
