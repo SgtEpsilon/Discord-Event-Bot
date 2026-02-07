@@ -12,8 +12,35 @@ const PRESETS_FILE = path.join(__dirname, 'presets.json');
 const config = {
     token: process.env.DISCORD_TOKEN,
     googleCredentials: process.env.GOOGLE_CREDENTIALS || null,
-    calendarId: process.env.CALENDAR_ID || 'primary'
+    calendarIds: process.env.CALENDAR_IDS || 'primary'
 };
+
+// Parse calendar IDs (supports multiple calendars)
+// Format: "Name1:id1,Name2:id2" or "id1,id2" or "primary"
+function parseCalendarIds(calendarIdsString) {
+    const calendars = [];
+    const parts = calendarIdsString.split(',').map(s => s.trim()).filter(s => s);
+    
+    parts.forEach((part, index) => {
+        if (part.includes(':')) {
+            // Format: "Name:calendar_id"
+            const [name, id] = part.split(':').map(s => s.trim());
+            calendars.push({ name, id });
+        } else {
+            // Format: "calendar_id" (no name provided)
+            calendars.push({ 
+                name: parts.length === 1 ? 'Calendar' : `Calendar ${index + 1}`, 
+                id: part 
+            });
+        }
+    });
+    
+    return calendars.length > 0 ? calendars : [{ name: 'Calendar', id: 'primary' }];
+}
+
+config.calendars = parseCalendarIds(config.calendarIds);
+
+console.log(`📅 Configured ${config.calendars.length} calendar(s): ${config.calendars.map(c => c.name).join(', ')}`);
 
 // Validate required configuration
 if (!config.token) {
@@ -28,6 +55,59 @@ let presets = {};
 if (fs.existsSync(PRESETS_FILE)) {
     presets = JSON.parse(fs.readFileSync(PRESETS_FILE, 'utf8'));
     console.log(`📋 Loaded ${Object.keys(presets).length} event presets`);
+}
+
+// Auto-sync tracking
+let autoSyncInterval = null;
+let autoSyncChannelId = null;
+let autoSyncGuildId = null;
+
+// Start auto-sync (runs every hour)
+function startAutoSync(channelId, guildId) {
+    autoSyncChannelId = channelId;
+    autoSyncGuildId = guildId;
+    
+    // Run immediately
+    syncFromGoogleCalendar(channelId, guildId).then(result => {
+        console.log(`[AutoSync] Initial sync: ${result.message}`);
+    });
+
+    // Then every hour
+    autoSyncInterval = setInterval(async () => {
+        console.log('[AutoSync] Running scheduled sync...');
+        const result = await syncFromGoogleCalendar(channelId, guildId);
+        
+        if (result.success && result.events.length > 0) {
+            // Post new events to Discord
+            const channel = await client.channels.fetch(channelId);
+            for (const event of result.events) {
+                const eventEmbed = createEventEmbed(event);
+                const buttons = createSignupButtons(event);
+                
+                const sentMessage = await channel.send({ 
+                    embeds: [eventEmbed],
+                    components: buttons || []
+                });
+
+                event.messageId = sentMessage.id;
+            }
+            saveEvents();
+            console.log(`[AutoSync] ✅ Posted ${result.events.length} new events`);
+        }
+    }, 60 * 60 * 1000); // Every hour
+
+    console.log('[AutoSync] ✅ Auto-sync enabled');
+}
+
+// Stop auto-sync
+function stopAutoSync() {
+    if (autoSyncInterval) {
+        clearInterval(autoSyncInterval);
+        autoSyncInterval = null;
+        autoSyncChannelId = null;
+        autoSyncGuildId = null;
+        console.log('[AutoSync] ❌ Auto-sync disabled');
+    }
 }
 
 // Load or create events storage
@@ -111,6 +191,134 @@ function formatDateTime(dateTimeStr) {
     return `${day}-${month}-${year} ${hours}:${minutes} ${meridiem}`;
 }
 
+// Sync events FROM Google Calendar to Discord
+async function syncFromGoogleCalendar(channelId, guildId, hoursAhead = 168, calendarFilter = null) {
+    if (!calendar) {
+        console.error('[Sync] Google Calendar not configured');
+        return { success: false, message: 'Google Calendar not configured', events: [] };
+    }
+
+    try {
+        const now = new Date();
+        const futureDate = new Date(now.getTime() + (hoursAhead * 60 * 60 * 1000));
+
+        const importedEvents = [];
+        
+        // Determine which calendars to sync from
+        let calendarsToSync = config.calendars;
+        if (calendarFilter) {
+            // Filter by calendar name or ID
+            calendarsToSync = config.calendars.filter(cal => 
+                cal.name.toLowerCase().includes(calendarFilter.toLowerCase()) ||
+                cal.id.toLowerCase().includes(calendarFilter.toLowerCase())
+            );
+            
+            if (calendarsToSync.length === 0) {
+                return { 
+                    success: false, 
+                    message: `No calendar found matching "${calendarFilter}"`, 
+                    events: [] 
+                };
+            }
+        }
+
+        console.log(`[Sync] Syncing from ${calendarsToSync.length} calendar(s): ${calendarsToSync.map(c => c.name).join(', ')}`);
+        console.log(`[Sync] Time range: ${now.toISOString()} to ${futureDate.toISOString()}`);
+
+        // Fetch events from each calendar
+        for (const cal of calendarsToSync) {
+            console.log(`[Sync] Fetching events from "${cal.name}" (${cal.id})`);
+            
+            try {
+                const response = await calendar.events.list({
+                    calendarId: cal.id,
+                    timeMin: now.toISOString(),
+                    timeMax: futureDate.toISOString(),
+                    singleEvents: true,
+                    orderBy: 'startTime',
+                });
+
+                const calendarEvents = response.data.items || [];
+                console.log(`[Sync] Found ${calendarEvents.length} events in "${cal.name}"`);
+
+                for (const calEvent of calendarEvents) {
+                    // Skip events that don't have a start time
+                    if (!calEvent.start || !calEvent.start.dateTime) {
+                        console.log(`[Sync] Skipping all-day event: ${calEvent.summary}`);
+                        continue;
+                    }
+
+                    // Check if event already exists
+                    const existingEvent = Object.values(events).find(e => 
+                        e.calendarEventId === calEvent.id ||
+                        e.calendarSourceId === cal.id + '_' + calEvent.id
+                    );
+                    
+                    if (existingEvent) {
+                        console.log(`[Sync] Event already exists: ${calEvent.summary}`);
+                        continue;
+                    }
+
+                    // Calculate duration
+                    const startTime = new Date(calEvent.start.dateTime);
+                    const endTime = new Date(calEvent.end.dateTime);
+                    const durationMinutes = Math.round((endTime - startTime) / 1000 / 60);
+
+                    // Create Discord event
+                    const eventId = `event_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+                    const newEvent = {
+                        id: eventId,
+                        title: calEvent.summary || 'Imported Event',
+                        description: calEvent.description || `Imported from ${cal.name}`,
+                        dateTime: startTime.toISOString(),
+                        duration: durationMinutes,
+                        maxParticipants: 0,
+                        roles: [],
+                        signups: {},
+                        createdBy: 'google_calendar',
+                        channelId: channelId,
+                        guildId: guildId,
+                        calendarEventId: calEvent.id,
+                        calendarSourceId: cal.id + '_' + calEvent.id, // Unique ID per calendar
+                        calendarSource: cal.name, // Store which calendar it came from
+                        calendarLink: calEvent.htmlLink
+                    };
+
+                    events[eventId] = newEvent;
+                    importedEvents.push(newEvent);
+                    console.log(`[Sync] Imported from "${cal.name}": ${calEvent.summary}`);
+                }
+            } catch (error) {
+                console.error(`[Sync] Error fetching from "${cal.name}": ${error.message}`);
+                // Continue with other calendars even if one fails
+            }
+        }
+
+        saveEvents();
+        
+        const calendarNames = calendarsToSync.length === 1 
+            ? calendarsToSync[0].name 
+            : `${calendarsToSync.length} calendars`;
+            
+        console.log(`[Sync] ✅ Imported ${importedEvents.length} new events from ${calendarNames}`);
+
+        return {
+            success: true,
+            message: `Imported ${importedEvents.length} events from ${calendarNames}`,
+            events: importedEvents,
+            calendars: calendarsToSync.map(c => c.name)
+        };
+
+    } catch (error) {
+        console.error('[Sync] ❌ Error syncing from Google Calendar:', error.message);
+        return {
+            success: false,
+            message: `Failed to sync: ${error.message}`,
+            events: []
+        };
+    }
+}
+
 // Initialize Discord client
 const client = new Client({
     intents: [
@@ -137,6 +345,9 @@ if (config.googleCredentials) {
 
 // Helper function to create event embed
 function createEventEmbed(event) {
+    const eventDate = new Date(event.dateTime);
+    const unixTimestamp = Math.floor(eventDate.getTime() / 1000);
+    
     const embed = new EmbedBuilder()
         .setTitle(event.title)
         .setDescription(event.description || 'No description provided')
@@ -146,6 +357,16 @@ function createEventEmbed(event) {
             { name: '⏱️ Duration', value: `${event.duration || 60} minutes`, inline: true },
             { name: '👥 Max Participants', value: event.maxParticipants ? event.maxParticipants.toString() : 'Unlimited', inline: true }
         );
+
+    // Add Discord timestamp (automatically converts to user's timezone)
+    const discordTimestamp = `<t:${unixTimestamp}:F>`; // Full date/time
+    const relativeTime = `<t:${unixTimestamp}:R>`; // Relative (e.g., "in 2 hours")
+    
+    embed.addFields({
+        name: '🌍 Your Time',
+        value: `${discordTimestamp}\n${relativeTime}`,
+        inline: false
+    });
 
     // Add roles section
     if (event.roles && event.roles.length > 0) {
@@ -168,7 +389,14 @@ function createEventEmbed(event) {
         embed.addFields({ name: '🔗 Google Calendar', value: `[View in Calendar](${event.calendarLink})`, inline: false });
     }
 
-    embed.setFooter({ text: `Event ID: ${event.id}` });
+    // Footer with event ID and Unix timestamp
+    let footerText = `Event ID: ${event.id}`;
+    if (event.calendarSource) {
+        footerText += ` | From: ${event.calendarSource}`;
+    }
+    footerText += ` | Unix: ${unixTimestamp}`;
+    
+    embed.setFooter({ text: footerText });
     
     return embed;
 }
@@ -237,22 +465,54 @@ async function createGoogleCalendarEvent(event) {
             },
         };
 
+        // Use the first calendar for Discord → Calendar sync
+        const targetCalendar = config.calendars[0];
+        console.log(`[Calendar] Creating event "${event.title}" in calendar: ${targetCalendar.name} (${targetCalendar.id})`);
+        
         const response = await calendar.events.insert({
-            calendarId: config.calendarId,
+            calendarId: targetCalendar.id,
             resource: calendarEvent,
         });
 
+        console.log(`[Calendar] ✅ Event created successfully`);
         return response.data.htmlLink;
     } catch (error) {
-        console.error('Error creating Google Calendar event:', error.message);
+        console.error('[Calendar] ❌ Error creating event:', error.message);
+        if (error.message.includes('Not Found')) {
+            console.error('[Calendar] Check: 1) Calendar ID is correct, 2) Calendar is shared with service account');
+            console.error(`[Calendar] Current calendar ID: ${config.calendars[0].id}`);
+        } else if (error.message.includes('Forbidden') || error.message.includes('Permission')) {
+            console.error('[Calendar] Check: Service account has "Make changes to events" permission');
+        }
         return null;
     }
 }
 
 // Bot ready event
-client.once('ready', () => {
+client.once('ready', async () => {
     console.log(`✅ ${client.user.tag} is online!`);
     console.log(`🔗 Google Calendar: ${calendar ? 'Connected' : 'Not configured'}`);
+    
+    // Test calendar connection if configured
+    if (calendar) {
+        console.log(`[Calendar] Testing connection to ${config.calendars.length} calendar(s)...`);
+        
+        for (const cal of config.calendars) {
+            try {
+                console.log(`[Calendar] Testing "${cal.name}" (${cal.id})`);
+                await calendar.calendars.get({ calendarId: cal.id });
+                console.log(`[Calendar] ✅ "${cal.name}" - Successfully connected`);
+            } catch (error) {
+                console.error(`[Calendar] ❌ "${cal.name}" - Failed: ${error.message}`);
+                if (error.message.includes('Not Found')) {
+                    console.error(`[Calendar] Calendar "${cal.id}" not found or not shared with service account`);
+                    console.error(`[Calendar] To fix:`);
+                    console.error(`[Calendar]   1. Check CALENDAR_IDS in .env is correct`);
+                    console.error(`[Calendar]   2. Share calendar with: ${config.googleCredentials ? JSON.parse(config.googleCredentials).client_email : 'service account email'}`);
+                }
+            }
+        }
+    }
 });
 
 // Message command handler
@@ -551,6 +811,180 @@ client.on('messageCreate', async (message) => {
         message.reply('✅ Event deleted!');
     }
 
+    // !sync - Sync events FROM Google Calendar
+    if (command === 'sync') {
+        if (!message.member.permissions.has(PermissionFlagsBits.ManageEvents)) {
+            return message.reply('❌ You need "Manage Events" permission to sync events.');
+        }
+
+        if (!calendar) {
+            return message.reply('❌ Google Calendar is not configured. Events cannot be synced.');
+        }
+
+        // Optional: filter by calendar name/ID
+        const calendarFilter = args.join(' ') || null;
+        
+        let syncMessage = '🔄 Syncing events from Google Calendar';
+        if (calendarFilter) {
+            syncMessage += ` (filtering: "${calendarFilter}")`;
+        }
+        syncMessage += '...';
+        
+        const loadingMsg = await message.reply(syncMessage);
+
+        const result = await syncFromGoogleCalendar(message.channel.id, message.guild.id, 168, calendarFilter);
+
+        if (!result.success) {
+            return loadingMsg.edit(`❌ ${result.message}`);
+        }
+
+        if (result.events.length === 0) {
+            const calendarsChecked = calendarFilter 
+                ? `calendar "${calendarFilter}"` 
+                : `${config.calendars.length} calendar(s)`;
+            return loadingMsg.edit(`✅ No new events to import from ${calendarsChecked}. All events are already synced!`);
+        }
+
+        // Post imported events to Discord
+        for (const event of result.events) {
+            const eventEmbed = createEventEmbed(event);
+            
+            // Add calendar source to embed
+            if (event.calendarSource) {
+                eventEmbed.setFooter({ text: `Event ID: ${event.id} | From: ${event.calendarSource}` });
+            }
+            
+            const buttons = createSignupButtons(event);
+            
+            const sentMessage = await message.channel.send({ 
+                embeds: [eventEmbed],
+                components: buttons || []
+            });
+
+            event.messageId = sentMessage.id;
+        }
+
+        saveEvents();
+        
+        const summaryParts = [`✅ ${result.message}`];
+        if (result.calendars && result.calendars.length > 0) {
+            summaryParts.push(`\n📅 Calendars: ${result.calendars.join(', ')}`);
+        }
+        summaryParts.push('\n\nEvents have been posted to this channel. Use `!addrole` to add signup roles if needed.');
+        
+        loadingMsg.edit(summaryParts.join(''));
+    }
+
+    // !calendars - List configured calendars
+    if (command === 'calendars') {
+        if (!calendar) {
+            return message.reply('❌ Google Calendar is not configured.');
+        }
+
+        const embed = new EmbedBuilder()
+            .setTitle('📅 Configured Calendars')
+            .setDescription('These calendars are available for syncing:')
+            .setColor(0x5865F2);
+
+        config.calendars.forEach((cal, index) => {
+            embed.addFields({
+                name: `${index + 1}. ${cal.name}`,
+                value: `ID: \`${cal.id}\`\nTo sync only this calendar: \`!sync ${cal.name}\``,
+                inline: false
+            });
+        });
+
+        embed.setFooter({ text: `${config.calendars.length} calendar(s) configured` });
+
+        message.reply({ embeds: [embed] });
+    }
+
+    // !eventinfo - Show detailed event information with timezone conversions
+    if (command === 'eventinfo') {
+        const eventId = args[0];
+        
+        if (!eventId || !events[eventId]) {
+            return message.reply('❌ Event not found. Usage: `!eventinfo <eventId>`\n\nGet the event ID from the event embed footer or use `!list`');
+        }
+
+        const event = events[eventId];
+        const eventDate = new Date(event.dateTime);
+        const unixTimestamp = Math.floor(eventDate.getTime() / 1000);
+        
+        const embed = new EmbedBuilder()
+            .setTitle(`📊 Event Info: ${event.title}`)
+            .setDescription(event.description || 'No description')
+            .setColor(0x5865F2)
+            .addFields(
+                { name: '📅 Original Format', value: formatDateTime(event.dateTime), inline: false },
+                { name: '🌍 Discord Timestamps', value: `**Full:** <t:${unixTimestamp}:F>\n**Date:** <t:${unixTimestamp}:D>\n**Time:** <t:${unixTimestamp}:t>\n**Relative:** <t:${unixTimestamp}:R>`, inline: false },
+                { name: '🔢 Unix Timestamp', value: `\`${unixTimestamp}\`\n[Copyable for sharing]`, inline: false },
+                { name: '🔗 Share This Event', value: `Send this to anyone:\n\`Event at <t:${unixTimestamp}:F>\`\n\nOr use: \`!eventinfo ${eventId}\``, inline: false }
+            );
+
+        // Add signup info
+        const totalSignups = Object.values(event.signups || {}).reduce((sum, arr) => sum + arr.length, 0);
+        embed.addFields({
+            name: '👥 Signups',
+            value: `${totalSignups} player(s) signed up`,
+            inline: true
+        });
+
+        // Add duration and max participants
+        embed.addFields(
+            { name: '⏱️ Duration', value: `${event.duration || 60} minutes`, inline: true },
+            { name: '📊 Max Participants', value: event.maxParticipants ? event.maxParticipants.toString() : 'Unlimited', inline: true }
+        );
+
+        // Add calendar info if available
+        if (event.calendarLink) {
+            embed.addFields({ name: '🔗 Google Calendar', value: `[View in Calendar](${event.calendarLink})`, inline: false });
+        }
+
+        if (event.calendarSource) {
+            embed.addFields({ name: '📅 Source', value: event.calendarSource, inline: true });
+        }
+
+        embed.setFooter({ text: `Created by: ${event.createdBy === 'google_calendar' ? 'Google Calendar Import' : 'Discord User'}` });
+
+        message.reply({ embeds: [embed] });
+    }
+
+    // !autosync - Toggle automatic sync from Google Calendar
+    if (command === 'autosync') {
+        if (!message.member.permissions.has(PermissionFlagsBits.ManageEvents)) {
+            return message.reply('❌ You need "Manage Events" permission to manage auto-sync.');
+        }
+
+        if (!calendar) {
+            return message.reply('❌ Google Calendar is not configured. Auto-sync cannot be enabled.');
+        }
+
+        const subcommand = args[0]?.toLowerCase();
+
+        if (subcommand === 'on' || subcommand === 'enable') {
+            // Enable auto-sync
+            if (!autoSyncInterval) {
+                startAutoSync(message.channel.id, message.guild.id);
+                return message.reply('✅ Auto-sync enabled! Events will be synced from Google Calendar every hour.');
+            } else {
+                return message.reply('ℹ️ Auto-sync is already enabled.');
+            }
+        } else if (subcommand === 'off' || subcommand === 'disable') {
+            // Disable auto-sync
+            if (autoSyncInterval) {
+                stopAutoSync();
+                return message.reply('✅ Auto-sync disabled.');
+            } else {
+                return message.reply('ℹ️ Auto-sync is already disabled.');
+            }
+        } else {
+            // Show status
+            const status = autoSyncInterval ? 'enabled ✅' : 'disabled ❌';
+            return message.reply(`Auto-sync is currently **${status}**\n\nUsage:\n\`!autosync on\` - Enable automatic syncing\n\`!autosync off\` - Disable automatic syncing`);
+        }
+    }
+
     // !help - Show help
     if (command === 'help') {
         const embed = new EmbedBuilder()
@@ -559,14 +993,18 @@ client.on('messageCreate', async (message) => {
             .setColor(0x5865F2)
             .addFields(
                 { name: '!create', value: 'Create a new event\n`!create <title> | <date-time> | <description> | <duration> | <max-participants>`', inline: false },
-                { name: '!preset', value: 'Create event from preset template\n`!preset <preset-name> <date-time> [description]`\nExample: `!preset overwatch 2026-02-15 20:00`', inline: false },
+                { name: '!preset', value: 'Create event from preset template\n`!preset <preset-name> <date-time> [description]`\nExample: `!preset overwatch 15-02-2026 20:00`', inline: false },
                 { name: '!presets', value: 'List all available preset templates', inline: false },
                 { name: '!addrole', value: 'Add a signup role to an event\n`!addrole <eventId> <emoji> <role-name> <max-slots>`', inline: false },
                 { name: '!list', value: 'List all upcoming events', inline: false },
+                { name: '!eventinfo', value: 'Show detailed event info with timezones\n`!eventinfo <eventId>`', inline: false },
                 { name: '!delete', value: 'Delete an event\n`!delete <eventId>`', inline: false },
+                { name: '!sync', value: 'Import events from Google Calendar\n`!sync` - Sync all calendars\n`!sync <calendar-name>` - Sync specific calendar', inline: false },
+                { name: '!calendars', value: 'List all configured calendars', inline: false },
+                { name: '!autosync', value: 'Manage automatic calendar syncing\n`!autosync on` - Enable hourly sync\n`!autosync off` - Disable auto-sync\n`!autosync` - Check status', inline: false },
                 { name: '!help', value: 'Show this help message', inline: false }
             )
-            .setFooter({ text: `Event Bot v2.0 • ${Object.keys(presets).length} presets available` });
+            .setFooter({ text: `Event Bot v2.3 • ${Object.keys(presets).length} presets • ${config.calendars.length} calendar(s)` });
 
         message.reply({ embeds: [embed] });
     }
@@ -576,28 +1014,68 @@ client.on('messageCreate', async (message) => {
 client.on('interactionCreate', async (interaction) => {
     if (!interaction.isButton()) return;
 
-    const [action, eventId, roleName] = interaction.customId.split('_');
+    const customId = interaction.customId;
+    console.log(`[Button Click] CustomId: "${customId}"`);
+    
+    // Parse the customId properly
+    // Format: action_eventId_roleName
+    // Event IDs are like: event_1770470049678
+    // So customId looks like: signup_event_1770470049678_Tank
+    // Or: leave_event_1770470049678
+    
+    let action, eventId, roleName;
+    
+    if (customId.startsWith('leave_')) {
+        // Format: leave_event_1770470049678
+        action = 'leave';
+        eventId = customId.substring(6); // Remove "leave_"
+        roleName = null;
+    } else if (customId.startsWith('signup_')) {
+        // Format: signup_event_1770470049678_RoleName
+        action = 'signup';
+        const withoutAction = customId.substring(7); // Remove "signup_"
+        
+        // Now we have: event_1770470049678_RoleName
+        // Find the last underscore (which separates eventId from roleName)
+        const lastUnderscore = withoutAction.lastIndexOf('_');
+        eventId = withoutAction.substring(0, lastUnderscore); // event_1770470049678
+        roleName = withoutAction.substring(lastUnderscore + 1); // RoleName
+    } else {
+        console.error(`[ERROR] Unknown action in customId: ${customId}`);
+        return interaction.reply({ 
+            content: '❌ Invalid button action.', 
+            flags: 64 // EPHEMERAL flag
+        });
+    }
+
+    console.log(`[Parse] Action: "${action}" | EventId: "${eventId}" | RoleName: "${roleName}"`);
+    console.log(`[Events] Available IDs: ${Object.keys(events).join(', ') || 'None'}`);
 
     if (!events[eventId]) {
-        return interaction.reply({ content: '❌ Event not found.', ephemeral: true });
+        console.error(`[ERROR] Event "${eventId}" not found in events object`);
+        return interaction.reply({ 
+            content: '❌ Event not found. The event may have been deleted.', 
+            flags: 64 // EPHEMERAL flag
+        });
     }
 
     const event = events[eventId];
+    console.log(`[Found] Event "${event.title}" (ID: ${eventId})`);
 
     if (action === 'signup') {
         const role = event.roles.find(r => r.name === roleName);
         if (!role) {
-            return interaction.reply({ content: '❌ Role not found.', ephemeral: true });
+            return interaction.reply({ content: '❌ Role not found.', flags: 64 });
         }
 
         // Check if user is already signed up for this role
         if (event.signups[roleName]?.includes(interaction.user.id)) {
-            return interaction.reply({ content: `✅ You're already signed up as ${role.emoji} ${roleName}!`, ephemeral: true });
+            return interaction.reply({ content: `✅ You're already signed up as ${role.emoji} ${roleName}!`, flags: 64 });
         }
 
         // Check if role is full
         if (role.maxSlots && event.signups[roleName]?.length >= role.maxSlots) {
-            return interaction.reply({ content: `❌ ${role.emoji} ${roleName} is full!`, ephemeral: true });
+            return interaction.reply({ content: `❌ ${role.emoji} ${roleName} is full!`, flags: 64 });
         }
 
         // Remove user from other roles
@@ -615,7 +1093,7 @@ client.on('interactionCreate', async (interaction) => {
         const buttons = createSignupButtons(event);
         await interaction.update({ embeds: [updatedEmbed], components: buttons || [] });
 
-        await interaction.followUp({ content: `✅ Signed up as ${role.emoji} ${roleName}!`, ephemeral: true });
+        await interaction.followUp({ content: `✅ Signed up as ${role.emoji} ${roleName}!`, flags: 64 });
     }
 
     if (action === 'leave') {
@@ -629,7 +1107,7 @@ client.on('interactionCreate', async (interaction) => {
         });
 
         if (!wasSignedUp) {
-            return interaction.reply({ content: '❌ You were not signed up for this event.', ephemeral: true });
+            return interaction.reply({ content: '❌ You were not signed up for this event.', flags: 64 });
         }
 
         saveEvents();
@@ -639,7 +1117,7 @@ client.on('interactionCreate', async (interaction) => {
         const buttons = createSignupButtons(event);
         await interaction.update({ embeds: [updatedEmbed], components: buttons || [] });
 
-        await interaction.followUp({ content: '✅ You have left the event.', ephemeral: true });
+        await interaction.followUp({ content: '✅ You have left the event.', flags: 64 });
     }
 });
 

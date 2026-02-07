@@ -152,6 +152,37 @@ After setting up your `.env` file:
 
 **Fix:** Re-copy the JSON from the downloaded file, ensure it's all one line
 
+### Error: "Failed to initialize Google Calendar"
+
+- Your `GOOGLE_CREDENTIALS` JSON is malformed
+- You forgot to put the entire JSON on one line
+- There are extra line breaks in the private key
+
+**Fix:** Re-copy the JSON from the downloaded file, ensure it's all one line
+
+### Error: "Not Found" when creating calendar events
+
+- Calendar ID is wrong
+- Calendar not shared with service account
+- Using wrong calendar
+
+**Fix:** 
+1. Check your Calendar ID in Google Calendar settings
+2. Make sure you shared the calendar with the service account email
+3. Verify CALENDAR_ID in .env matches
+
+**To find your Calendar ID:**
+1. Open Google Calendar
+2. Click three dots next to calendar → Settings
+3. Scroll to "Integrate calendar"
+4. Copy the Calendar ID
+
+**To find service account email:**
+1. Open your JSON credentials file
+2. Look for `"client_email"`
+3. Copy that email (e.g., `bot@project.iam.gserviceaccount.com`)
+4. Share your calendar with this email
+
 ### Bot connects but doesn't create calendar events
 
 - Your service account isn't shared with the calendar

@@ -6,7 +6,9 @@ A powerful Discord bot for managing events with Google Calendar integration and 
 
 ✨ **Easy Event Creation** - Create events with simple commands
 📋 **Preset Templates** - 18+ game presets ready to use (Overwatch, Helldivers, WoW, etc.)
-📅 **Google Calendar Sync** - Automatically sync events to Google Calendar
+📅 **Google Calendar Sync** - Two-way sync with Google Calendar
+🔄 **Calendar Import** - Import events FROM Google Calendar to Discord
+⏰ **Auto-Sync** - Automatic hourly syncing from calendar
 👥 **Custom Signup Roles** - Define custom roles with emojis and slot limits
 🎮 **Perfect for Gaming** - Great for raids, tournaments, scrims, and game nights
 🔒 **Permission Controls** - Manage events with Discord permissions
@@ -210,6 +212,30 @@ Examples:
 ```
 !help
 ```
+
+### Calendar Sync (NEW!)
+
+**Import events from Google Calendar:**
+```
+!sync
+```
+
+**Enable automatic hourly syncing:**
+```
+!autosync on
+```
+
+**Disable auto-sync:**
+```
+!autosync off
+```
+
+**Check auto-sync status:**
+```
+!autosync
+```
+
+See `CALENDAR_SYNC_GUIDE.md` for detailed information on syncing events from Google Calendar.
 
 ## Usage Examples
 
