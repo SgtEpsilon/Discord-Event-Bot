@@ -183,157 +183,6 @@ app.get('/api/presets', (req, res) => {
 // Create new preset
 app.post('/api/presets', (req, res) => {
     try {
-        const { presetId, name, description, duration, maxParticipants, roles } = req.body;
-        
-        if (!presetId || !name) {
-            return res.status(400).json({ success: false, error: 'Preset ID and name are required' });
-        }
-
-        const presets = loadPresets();
-        
-        // Check if preset ID already exists
-        if (presets[presetId]) {
-            return res.status(400).json({ success: false, error: 'Preset ID already exists' });
-        }
-
-        const newPreset = {
-            name,
-            description: description || '',
-            duration: parseInt(duration) || 60,
-            maxParticipants: parseInt(maxParticipants) || 0,
-            roles: roles || []
-        };
-
-        presets[presetId] = newPreset;
-        fs.writeFileSync(PRESETS_FILE, JSON.stringify(presets, null, 2));
-
-        res.json({ success: true, preset: newPreset, presetId });
-    } catch (error) {
-        res.status(500).json({ success: false, error: error.message });
-    }
-});
-
-// Update preset
-app.put('/api/presets/:presetId', (req, res) => {
-    try {
-        const { presetId } = req.params;
-        const presets = loadPresets();
-        
-        if (!presets[presetId]) {
-            return res.status(404).json({ success: false, error: 'Preset not found' });
-        }
-
-        const { name, description, duration, maxParticipants, roles } = req.body;
-
-        if (name) presets[presetId].name = name;
-        if (description !== undefined) presets[presetId].description = description;
-        if (duration) presets[presetId].duration = parseInt(duration);
-        if (maxParticipants !== undefined) presets[presetId].maxParticipants = parseInt(maxParticipants);
-        if (roles) presets[presetId].roles = roles;
-
-        fs.writeFileSync(PRESETS_FILE, JSON.stringify(presets, null, 2));
-        res.json({ success: true, preset: presets[presetId] });
-    } catch (error) {
-        res.status(500).json({ success: false, error: error.message });
-    }
-});
-
-// Delete preset
-app.delete('/api/presets/:presetId', (req, res) => {
-    try {
-        const { presetId } = req.params;
-        const presets = loadPresets();
-        
-        if (!presets[presetId]) {
-            return res.status(404).json({ success: false, error: 'Preset not found' });
-        }
-
-        delete presets[presetId];
-        fs.writeFileSync(PRESETS_FILE, JSON.stringify(presets, null, 2));
-
-        res.json({ success: true, message: 'Preset deleted' });
-    } catch (error) {
-        res.status(500).json({ success: false, error: error.message });
-    }
-});
-
-// Create event from preset
-app.post('/api/events/from-preset', (req, res) => {
-    try {
-        const { presetName, dateTime, description } = req.body;
-        
-        if (!presetName || !dateTime) {
-            return res.status(400).json({ success: false, error: 'Preset name and dateTime are required' });
-        }
-
-        const presets = loadPresets();
-        const preset = presets[presetName];
-        
-        if (!preset) {
-            return res.status(404).json({ success: false, error: 'Preset not found' });
-        }
-
-        const events = loadEvents();
-        const eventId = `event_${Date.now()}`;
-        
-        const newEvent = {
-            id: eventId,
-            title: preset.name,
-            description: description || preset.description,
-            dateTime: new Date(dateTime).toISOString(),
-            duration: preset.duration,
-            maxParticipants: preset.maxParticipants,
-            roles: JSON.parse(JSON.stringify(preset.roles)), // Deep copy
-            signups: {},
-            createdBy: 'web_interface',
-            channelId: null,
-            guildId: null,
-            messageId: null
-        };
-
-        // Initialize signups
-        preset.roles.forEach(role => {
-            newEvent.signups[role.name] = [];
-        });
-
-        events[eventId] = newEvent;
-        saveEvents(events);
-
-        res.json({ success: true, event: newEvent });
-    } catch (error) {
-        res.status(500).json({ success: false, error: error.message });
-    }
-});
-
-// Get bot statistics
-app.get('/api/stats', (req, res) => {
-    try {
-        const events = loadEvents();
-        const presets = loadPresets();
-        
-        const eventList = Object.values(events);
-        const now = new Date();
-        
-        const stats = {
-            totalEvents: eventList.length,
-            upcomingEvents: eventList.filter(e => new Date(e.dateTime) > now).length,
-            pastEvents: eventList.filter(e => new Date(e.dateTime) <= now).length,
-            totalSignups: eventList.reduce((sum, event) => {
-                return sum + Object.values(event.signups || {}).reduce((s, arr) => s + arr.length, 0);
-            }, 0),
-            totalPresets: Object.keys(presets).length,
-            eventsWithCalendar: eventList.filter(e => e.calendarLink).length
-        };
-
-        res.json({ success: true, stats });
-    } catch (error) {
-        res.status(500).json({ success: false, error: error.message });
-    }
-});
-
-// Create new preset
-app.post('/api/presets', (req, res) => {
-    try {
         const { key, name, description, duration, maxParticipants, roles } = req.body;
         
         if (!key || !name || !duration || !roles) {
@@ -422,6 +271,80 @@ app.delete('/api/presets/:key', (req, res) => {
     }
 });
 
+// Create event from preset
+app.post('/api/events/from-preset', (req, res) => {
+    try {
+        const { presetName, dateTime, description } = req.body;
+        
+        if (!presetName || !dateTime) {
+            return res.status(400).json({ success: false, error: 'Preset name and dateTime are required' });
+        }
+
+        const presets = loadPresets();
+        const preset = presets[presetName];
+        
+        if (!preset) {
+            return res.status(404).json({ success: false, error: 'Preset not found' });
+        }
+
+        const events = loadEvents();
+        const eventId = `event_${Date.now()}`;
+        
+        const newEvent = {
+            id: eventId,
+            title: preset.name,
+            description: description || preset.description,
+            dateTime: new Date(dateTime).toISOString(),
+            duration: preset.duration,
+            maxParticipants: preset.maxParticipants,
+            roles: JSON.parse(JSON.stringify(preset.roles)), // Deep copy
+            signups: {},
+            createdBy: 'web_interface',
+            channelId: null,
+            guildId: null,
+            messageId: null
+        };
+
+        // Initialize signups
+        preset.roles.forEach(role => {
+            newEvent.signups[role.name] = [];
+        });
+
+        events[eventId] = newEvent;
+        saveEvents(events);
+
+        res.json({ success: true, event: newEvent });
+    } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+// Get bot statistics
+app.get('/api/stats', (req, res) => {
+    try {
+        const events = loadEvents();
+        const presets = loadPresets();
+        
+        const eventList = Object.values(events);
+        const now = new Date();
+        
+        const stats = {
+            totalEvents: eventList.length,
+            upcomingEvents: eventList.filter(e => new Date(e.dateTime) > now).length,
+            pastEvents: eventList.filter(e => new Date(e.dateTime) <= now).length,
+            totalSignups: eventList.reduce((sum, event) => {
+                return sum + Object.values(event.signups || {}).reduce((s, arr) => s + arr.length, 0);
+            }, 0),
+            totalPresets: Object.keys(presets).length,
+            eventsWithCalendar: eventList.filter(e => e.calendarLink).length
+        };
+
+        res.json({ success: true, stats });
+    } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
 // Health check
 app.get('/api/health', (req, res) => {
     res.json({ 
@@ -436,11 +359,34 @@ app.get('/', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
-// Start server
-app.listen(PORT, () => {
-    console.log(`🌐 Web interface running on http://localhost:${PORT}`);
-    console.log(`📊 API available at http://localhost:${PORT}/api`);
-    console.log(`💡 Open http://localhost:${PORT} in your browser to manage events`);
+// Start server on all network interfaces (0.0.0.0)
+app.listen(PORT, '0.0.0.0', () => {
+    const os = require('os');
+    
+    function getLocalIP() {
+        const interfaces = os.networkInterfaces();
+        for (const name of Object.keys(interfaces)) {
+            for (const iface of interfaces[name]) {
+                if (iface.family === 'IPv4' && !iface.internal) {
+                    return iface.address;
+                }
+            }
+        }
+        return 'localhost';
+    }
+    
+    const localIP = getLocalIP();
+    
+    console.log(`\n🌐 Web Interface Started Successfully!`);
+    console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
+    console.log(`📍 Local access:   http://localhost:${PORT}`);
+    console.log(`📱 Network access: http://${localIP}:${PORT}`);
+    console.log(`📊 API endpoint:   http://localhost:${PORT}/api`);
+    console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
+    console.log(`\n💡 To access from other devices on your network:`);
+    console.log(`   1. Make sure devices are on the same WiFi/network`);
+    console.log(`   2. Open browser and go to: http://${localIP}:${PORT}`);
+    console.log(`   3. If blocked, allow port ${PORT} through firewall\n`);
 });
 
 module.exports = app;
