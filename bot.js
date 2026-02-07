@@ -41,6 +41,76 @@ function saveEvents() {
     fs.writeFileSync(EVENTS_FILE, JSON.stringify(events, null, 2));
 }
 
+// Helper function to parse DD-MM-YYYY HH:MM format
+function parseDateTime(dateTimeStr) {
+    // Expected format: DD-MM-YYYY HH:MM or DD-MM-YYYY HH:MM AM/PM
+    const parts = dateTimeStr.trim().split(' ');
+    
+    if (parts.length < 2) {
+        return null;
+    }
+    
+    const datePart = parts[0]; // DD-MM-YYYY
+    const timePart = parts[1]; // HH:MM
+    const meridiem = parts[2]?.toUpperCase(); // AM/PM (optional)
+    
+    // Split date: DD-MM-YYYY
+    const dateComponents = datePart.split('-');
+    if (dateComponents.length !== 3) {
+        return null;
+    }
+    
+    const day = parseInt(dateComponents[0]);
+    const month = parseInt(dateComponents[1]) - 1; // Months are 0-indexed
+    const year = parseInt(dateComponents[2]);
+    
+    // Split time: HH:MM
+    const timeComponents = timePart.split(':');
+    if (timeComponents.length !== 2) {
+        return null;
+    }
+    
+    let hours = parseInt(timeComponents[0]);
+    const minutes = parseInt(timeComponents[1]);
+    
+    // Handle AM/PM
+    if (meridiem) {
+        if (meridiem === 'PM' && hours < 12) {
+            hours += 12;
+        } else if (meridiem === 'AM' && hours === 12) {
+            hours = 0;
+        }
+    }
+    
+    // Create date object
+    const dateTime = new Date(year, month, day, hours, minutes);
+    
+    // Validate the date
+    if (isNaN(dateTime.getTime())) {
+        return null;
+    }
+    
+    return dateTime;
+}
+
+// Helper function to format date for display (DD-MM-YYYY HH:MM AM/PM)
+function formatDateTime(dateTimeStr) {
+    const date = new Date(dateTimeStr);
+    
+    const day = String(date.getDate()).padStart(2, '0');
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const year = date.getFullYear();
+    
+    let hours = date.getHours();
+    const minutes = String(date.getMinutes()).padStart(2, '0');
+    const meridiem = hours >= 12 ? 'PM' : 'AM';
+    
+    hours = hours % 12;
+    hours = hours ? hours : 12; // Convert 0 to 12
+    
+    return `${day}-${month}-${year} ${hours}:${minutes} ${meridiem}`;
+}
+
 // Initialize Discord client
 const client = new Client({
     intents: [
@@ -72,7 +142,7 @@ function createEventEmbed(event) {
         .setDescription(event.description || 'No description provided')
         .setColor(0x5865F2)
         .addFields(
-            { name: '📅 Date & Time', value: new Date(event.dateTime).toLocaleString(), inline: true },
+            { name: '📅 Date & Time', value: formatDateTime(event.dateTime), inline: true },
             { name: '⏱️ Duration', value: `${event.duration || 60} minutes`, inline: true },
             { name: '👥 Max Participants', value: event.maxParticipants ? event.maxParticipants.toString() : 'Unlimited', inline: true }
         );
@@ -202,7 +272,7 @@ client.on('messageCreate', async (message) => {
         const eventId = `event_${Date.now()}`;
         const embed = new EmbedBuilder()
             .setTitle('📝 Create New Event')
-            .setDescription('Use the following format to create an event:\n\n`!create <title> | <date-time> | <description> | <duration-minutes> | <max-participants>`\n\nExample:\n`!create Raid Night | 2026-02-15 20:00 | Weekly raid | 120 | 20`\n\nOr use: `!preset <preset-name> <date-time> [description]` for quick setup\nSee `!presets` for available templates')
+            .setDescription('Use the following format to create an event:\n\n`!create <title> | <date-time> | <description> | <duration-minutes> | <max-participants>`\n\nExample:\n`!create Raid Night | 15-02-2026 20:00 | Weekly raid | 120 | 20`\n\nDate format: DD-MM-YYYY HH:MM or DD-MM-YYYY HH:MM AM/PM\n\nOr use: `!preset <preset-name> <date-time>` for quick setup\nSee `!presets` for available templates')
             .setColor(0x5865F2);
 
         if (args.length >= 2) {
@@ -213,10 +283,10 @@ client.on('messageCreate', async (message) => {
             }
 
             const [title, dateTimeStr, description = '', durationStr = '60', maxParticipantsStr = '0'] = parts;
-            const dateTime = new Date(dateTimeStr);
+            const dateTime = parseDateTime(dateTimeStr);
             
-            if (isNaN(dateTime.getTime())) {
-                return message.reply('❌ Invalid date format. Use: YYYY-MM-DD HH:MM');
+            if (!dateTime) {
+                return message.reply('❌ Invalid date format. Use: DD-MM-YYYY HH:MM or DD-MM-YYYY HH:MM AM/PM\nExample: 15-02-2026 20:00 or 15-02-2026 08:00 PM');
             }
 
             const newEvent = {
@@ -264,22 +334,38 @@ client.on('messageCreate', async (message) => {
         }
 
         if (args.length < 2) {
-            return message.reply('Usage: `!preset <preset-name> <date-time> [custom-description]`\nExample: `!preset overwatch 2026-02-15 20:00 Competitive night`\n\nUse `!presets` to see all available presets.');
+            return message.reply('Usage: `!preset <preset-name> <date-time> [custom-description]`\nExample: `!preset overwatch 15-02-2026 20:00 Competitive night`\nDate format: DD-MM-YYYY HH:MM or DD-MM-YYYY HH:MM AM/PM\n\nUse `!presets` to see all available presets.');
         }
 
         const presetName = args[0].toLowerCase();
-        const dateTimeStr = args[1] + ' ' + (args[2] || '');
-        const customDescription = args.slice(3).join(' ');
+        
+        // Find where the date starts (could be args[1] or args[1] + args[2] if it has AM/PM)
+        let dateTimeStr = '';
+        let descriptionStartIndex = 2;
+        
+        // Check if args[3] is AM or PM (meaning time is in args[2])
+        if (args[3] && (args[3].toUpperCase() === 'AM' || args[3].toUpperCase() === 'PM')) {
+            dateTimeStr = `${args[1]} ${args[2]} ${args[3]}`;
+            descriptionStartIndex = 4;
+        } else if (args[2] && (args[2].toUpperCase() === 'AM' || args[2].toUpperCase() === 'PM')) {
+            dateTimeStr = `${args[1]} ${args[2]}`;
+            descriptionStartIndex = 3;
+        } else {
+            dateTimeStr = `${args[1]} ${args[2] || ''}`;
+            descriptionStartIndex = 3;
+        }
+        
+        const customDescription = args.slice(descriptionStartIndex).join(' ');
 
         if (!presets[presetName]) {
             return message.reply(`❌ Preset "${presetName}" not found. Use \`!presets\` to see available presets.`);
         }
 
         const preset = presets[presetName];
-        const dateTime = new Date(dateTimeStr);
+        const dateTime = parseDateTime(dateTimeStr);
 
-        if (isNaN(dateTime.getTime())) {
-            return message.reply('❌ Invalid date format. Use: YYYY-MM-DD HH:MM\nExample: `!preset overwatch 2026-02-15 20:00`');
+        if (!dateTime) {
+            return message.reply('❌ Invalid date format. Use: DD-MM-YYYY HH:MM or DD-MM-YYYY HH:MM AM/PM\nExample: `!preset overwatch 15-02-2026 20:00` or `!preset overwatch 15-02-2026 08:00 PM`');
         }
 
         const eventId = `event_${Date.now()}`;
@@ -441,7 +527,7 @@ client.on('messageCreate', async (message) => {
             const totalSignups = Object.values(event.signups).reduce((sum, arr) => sum + arr.length, 0);
             embed.addFields({
                 name: event.title,
-                value: `ID: \`${event.id}\`\n📅 ${new Date(event.dateTime).toLocaleString()}\n👥 ${totalSignups} signed up`,
+                value: `ID: \`${event.id}\`\n📅 ${formatDateTime(event.dateTime)}\n👥 ${totalSignups} signed up`,
                 inline: true
             });
         });

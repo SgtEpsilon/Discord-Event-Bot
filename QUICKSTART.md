@@ -51,13 +51,13 @@ npm start
 The quickest way is to use a preset:
 
 ```
-!preset overwatch 2026-02-15 20:00
+!preset overwatch 15-02-2026 20:00
 ```
 
 Or create a custom event:
 
 ```
-!create Raid Night | 2026-02-15 20:00 | Weekly raid | 120 | 10
+!create Raid Night | 15-02-2026 20:00 | Weekly raid | 120 | 10
 ```
 
 The bot will respond with an event ID. Then add roles:
@@ -83,11 +83,11 @@ Done! Users can now click buttons to sign up!
 ## Popular Presets
 
 ```
-!preset overwatch 2026-02-15 20:00
-!preset helldivers 2026-02-16 19:00
-!preset wow-raid 2026-02-17 20:00
-!preset dnd 2026-02-18 18:00
-!preset valorant 2026-02-19 21:00
+!preset overwatch 15-02-2026 20:00
+!preset helldivers 16-02-2026 19:00
+!preset wow-raid 17-02-2026 20:00
+!preset dnd 18-02-2026 18:00
+!preset valorant 19-02-2026 21:00
 ```
 
 ## Need Google Calendar?

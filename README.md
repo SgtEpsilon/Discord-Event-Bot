@@ -145,10 +145,10 @@ That's it! Events will now automatically sync to Google Calendar.
 
 Examples:
 ```
-!preset overwatch 2026-02-15 20:00
-!preset helldivers 2026-02-16 19:00 Weekend squad up
-!preset wow-raid 2026-02-17 20:00 Mythic progression
-!preset dnd 2026-02-18 18:00 Chapter 5: The Dragon's Lair
+!preset overwatch 15-02-2026 20:00
+!preset helldivers 16-02-2026 19:00 Weekend squad up
+!preset wow-raid 17-02-2026 20:00 Mythic progression
+!preset dnd 18-02-2026 18:00 Chapter 5: The Dragon's Lair
 ```
 
 **Available Presets:**
@@ -180,7 +180,7 @@ Examples:
 
 Example:
 ```
-!create Raid Night | 2026-02-15 20:00 | Weekly raid progression | 120 | 20
+!create Raid Night | 15-02-2026 20:00 | Weekly raid progression | 120 | 20
 ```
 
 **Add signup roles to an event:**
@@ -216,7 +216,7 @@ Examples:
 ### Example 1: Using Presets (Quickest Method)
 
 ```
-!preset overwatch 2026-02-15 20:00 Competitive push to Diamond
+!preset overwatch 15-02-2026 20:00 Competitive push to Diamond
 ```
 
 Done! The event is created with all roles automatically configured.
@@ -240,7 +240,7 @@ Done! The event is created with all roles automatically configured.
 ### Example 4: D&D Session
 
 ```
-!preset dnd 2026-02-20 18:00 Session 12: Into the Underdark
+!preset dnd 20-02-2026 18:00 Session 12: Into the Underdark
 ```
 
 ## How Users Sign Up
@@ -321,7 +321,7 @@ You can add your own game presets by editing `presets.json`:
 
 Then use it with:
 ```
-!preset your-game 2026-02-15 20:00
+!preset your-game 15-02-2026 20:00
 ```
 
 **Preset Fields:**
