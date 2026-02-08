@@ -2,13 +2,12 @@
 const express = require('express');
 const path = require('path');
 const cors = require('cors');
+const crypto = require('crypto'); // Added for timing-safe comparisons
 require('dotenv').config();
-// web-server.js - Add after require('dotenv').config()
+
+// Non-sensitive presence check only (NO key exposure)
 console.log('✅ WEB_API_KEY loaded from .env:', process.env.WEB_API_KEY ? 'YES' : 'NO');
-if (process.env.WEB_API_KEY) {
-  console.log('🔑 Key length:', process.env.WEB_API_KEY.length);
-  console.log('🔑 First 4 chars:', process.env.WEB_API_KEY.substring(0, 4) + '...');
-}
+
 const { config } = require('./src/config');
 const EventManager = require('./src/services/eventManager');
 const PresetManager = require('./src/services/presetManager');
@@ -26,7 +25,6 @@ app.use(express.static(path.join(__dirname, 'public')));
 // ==========================================
 // AUTHENTICATION MIDDLEWARE
 // ==========================================
-
 /**
  * Validate API key from X-API-Key header
  * Priority order:
@@ -37,37 +35,40 @@ app.use(express.static(path.join(__dirname, 'public')));
 function verifyApiKey() {
   // Check environment variable first (from .env file)
   const apiKeyFromEnv = process.env.WEB_API_KEY;
-  
   // Fallback to config (which also reads from .env)
   const apiKeyFromConfig = config.web?.apiKey;
-  
   // Use the first available key
   const validApiKey = apiKeyFromEnv || apiKeyFromConfig;
-  
+
   return (req, res, next) => {
     // Skip auth if no API key is configured (development mode)
     if (!validApiKey) {
-      console.warn('[Auth] No API key configured - allowing unauthenticated access');
-      console.warn('[Auth] To enable authentication, set WEB_API_KEY in your .env file');
       return next();
     }
-    
-    const apiKey = req.headers['x-api-key'] || req.headers['authorization']?.replace('Bearer ', '');
-    
+
+    const apiKey = req.headers['x-api-key'] || 
+                   req.headers['authorization']?.replace('Bearer ', '');
+
     if (!apiKey) {
       return res.status(401).json({ 
         success: false, 
         error: 'Missing authentication. Please provide X-API-Key header or Authorization: Bearer <token>' 
       });
     }
-    
-    if (apiKey !== validApiKey) {
+
+    // Constant-time comparison to prevent timing attacks
+    const keyBuf = Buffer.from(apiKey);
+    const validKeyBuf = Buffer.from(validApiKey);
+
+    // Length check prevents timing leakage before comparison
+    if (keyBuf.length !== validKeyBuf.length || 
+        !crypto.timingSafeEqual(keyBuf, validKeyBuf)) {
       return res.status(401).json({ 
         success: false, 
         error: 'Invalid API key' 
       });
     }
-    
+
     next();
   };
 }
@@ -81,6 +82,17 @@ function authorizeGuildAccess() {
     next();
   };
 }
+
+// TODO: CONCURRENCY SAFETY - Critical fix required
+// Web server and bot process independently access shared JSON files 
+// (events.json, presets.json, events-config.json).
+// This risks data corruption during concurrent writes. REQUIRED FIX:
+//   OPTION A (Recommended): Refactor bot to expose HTTP/IPC data API; 
+//                           web server delegates all writes to bot process
+//   OPTION B: Inject atomic file writer (e.g., proper-lockfile) into 
+//             EventManager/PresetManager/EventsConfig constructors
+//   *Must be implemented in class implementations (src/services/*), not here*
+//   *Until fixed, avoid running web server and bot simultaneously on same filesystem*
 
 // Initialize services
 const calendarService = new CalendarService(
@@ -96,7 +108,6 @@ const eventsConfig = new EventsConfig(
 // ==========================================
 // API ROUTES
 // ==========================================
-
 // Health check (public - no auth required)
 app.get('/api/health', (req, res) => {
   res.json({
@@ -140,14 +151,13 @@ app.get('/api/events/:id', (req, res) => {
 app.post('/api/events', async (req, res) => {
   try {
     const { title, description, dateTime, duration, maxParticipants, roles } = req.body;
-    
     if (!title || !dateTime) {
       return res.status(400).json({ 
         success: false, 
         error: 'Title and dateTime are required' 
       });
     }
-    
+
     // Validate dateTime before passing to createEvent
     const parsedDate = new Date(dateTime);
     if (isNaN(parsedDate.getTime())) {
@@ -156,7 +166,7 @@ app.post('/api/events', async (req, res) => {
         error: `Invalid dateTime format: "${dateTime}". Please provide a valid ISO 8601 date/time string or timestamp.` 
       });
     }
-    
+
     const event = await eventManager.createEvent({
       title,
       description: description || '',
@@ -179,7 +189,6 @@ app.post('/api/events', async (req, res) => {
 app.put('/api/events/:id', (req, res) => {
   try {
     const event = eventManager.getEvent(req.params.id);
-    
     if (!event) {
       return res.status(404).json({ success: false, error: 'Event not found' });
     }
@@ -189,7 +198,7 @@ app.put('/api/events/:id', (req, res) => {
     const updates = {};
     if (title) updates.title = title;
     if (description !== undefined) updates.description = description;
-    
+
     // Validate dateTime if provided
     if (dateTime) {
       const parsedDate = new Date(dateTime);
@@ -201,14 +210,14 @@ app.put('/api/events/:id', (req, res) => {
       }
       updates.dateTime = parsedDate.toISOString();
     }
-    
+
     if (duration !== undefined) updates.duration = parseInt(duration);
     if (maxParticipants !== undefined) updates.maxParticipants = parseInt(maxParticipants);
     if (roles) updates.roles = roles;
 
     eventManager.updateEvent(req.params.id, updates);
     const updatedEvent = eventManager.getEvent(req.params.id);
-    
+
     res.json({ success: true, event: updatedEvent });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
@@ -219,7 +228,6 @@ app.put('/api/events/:id', (req, res) => {
 app.delete('/api/events/:id', (req, res) => {
   try {
     const event = eventManager.getEvent(req.params.id);
-    
     if (!event) {
       return res.status(404).json({ success: false, error: 'Event not found' });
     }
@@ -245,7 +253,6 @@ app.get('/api/presets', (req, res) => {
 app.post('/api/presets', (req, res) => {
   try {
     const { key, name, description, duration, maxParticipants, roles } = req.body;
-    
     if (!key || !name || !duration || !roles) {
       return res.status(400).json({ 
         success: false, 
@@ -279,7 +286,6 @@ app.post('/api/presets', (req, res) => {
 app.put('/api/presets/:key', (req, res) => {
   try {
     const preset = presetManager.getPreset(req.params.key);
-    
     if (!preset) {
       return res.status(404).json({ success: false, error: 'Preset not found' });
     }
@@ -295,7 +301,7 @@ app.put('/api/presets/:key', (req, res) => {
 
     presetManager.updatePreset(req.params.key, updates);
     const updatedPreset = presetManager.getPreset(req.params.key);
-    
+
     res.json({ success: true, preset: updatedPreset });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
@@ -306,7 +312,6 @@ app.put('/api/presets/:key', (req, res) => {
 app.delete('/api/presets/:key', (req, res) => {
   try {
     const preset = presetManager.getPreset(req.params.key);
-    
     if (!preset) {
       return res.status(404).json({ success: false, error: 'Preset not found' });
     }
@@ -322,14 +327,13 @@ app.delete('/api/presets/:key', (req, res) => {
 app.post('/api/events/from-preset', async (req, res) => {
   try {
     const { presetName, dateTime, description } = req.body;
-    
     if (!presetName || !dateTime) {
       return res.status(400).json({ 
         success: false, 
         error: 'Preset name and dateTime are required' 
       });
     }
-    
+
     // Validate dateTime before using
     const parsedDate = new Date(dateTime);
     if (isNaN(parsedDate.getTime())) {
@@ -340,7 +344,7 @@ app.post('/api/events/from-preset', async (req, res) => {
     }
 
     const preset = presetManager.getPreset(presetName);
-    
+
     if (!preset) {
       return res.status(404).json({ success: false, error: 'Preset not found' });
     }
@@ -370,7 +374,6 @@ app.get('/api/stats', (req, res) => {
   try {
     const stats = eventManager.getStats();
     stats.totalPresets = presetManager.getPresetCount();
-    
     res.json({ success: true, stats });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
@@ -383,7 +386,6 @@ app.get('/api/event-channel/:guildId', authorizeGuildAccess(), (req, res) => {
     const guildId = req.params.guildId;
     const channelId = eventsConfig.getEventChannel(guildId);
     const hasChannel = eventsConfig.hasEventChannel(guildId);
-    
     res.json({ 
       success: true, 
       guildId,
@@ -400,20 +402,19 @@ app.post('/api/event-channel/:guildId', authorizeGuildAccess(), (req, res) => {
   try {
     const guildId = req.params.guildId;
     const { channelId } = req.body;
-    
     if (!channelId) {
       return res.status(400).json({ 
         success: false, 
         error: 'channelId is required' 
       });
     }
-    
-    const config = eventsConfig.setEventChannel(guildId, channelId);
-    
+
+    const updatedConfig = eventsConfig.setEventChannel(guildId, channelId); // RENAMED: avoids shadowing module config
+
     res.json({ 
       success: true, 
       message: 'Event channel set successfully',
-      config
+      config: updatedConfig // Uses renamed variable
     });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
@@ -424,12 +425,11 @@ app.post('/api/event-channel/:guildId', authorizeGuildAccess(), (req, res) => {
 app.delete('/api/event-channel/:guildId', authorizeGuildAccess(), (req, res) => {
   try {
     const guildId = req.params.guildId;
-    const config = eventsConfig.removeEventChannel(guildId);
-    
+    const updatedConfig = eventsConfig.removeEventChannel(guildId); // RENAMED: avoids shadowing module config
     res.json({ 
       success: true, 
       message: 'Event channel cleared successfully',
-      config
+      config: updatedConfig // Uses renamed variable
     });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
@@ -444,7 +444,6 @@ app.get('/', (req, res) => {
 // Start server on all network interfaces (0.0.0.0)
 app.listen(PORT, '0.0.0.0', () => {
   const os = require('os');
-  
   function getLocalIP() {
     const interfaces = os.networkInterfaces();
     for (const name of Object.keys(interfaces)) {
@@ -456,33 +455,30 @@ app.listen(PORT, '0.0.0.0', () => {
     }
     return 'localhost';
   }
-
   const localIP = getLocalIP();
-
   console.log(`\n🌐 Web Interface Started Successfully!`);
   console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
-  console.log(`📍 Local access:   http://localhost:${PORT}`);
+  console.log(`📍 Local access: http://localhost:${PORT}`);
   console.log(`📱 Network access: http://${localIP}:${PORT}`);
-  console.log(`📊 API endpoint:   http://localhost:${PORT}/api`);
+  console.log(`📊 API endpoint: http://localhost:${PORT}/api`);
   console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
   
-  // Show auth status
+  // Auth status logged ONCE at startup (replaces per-request warnings)
   const apiKeyFromEnv = process.env.WEB_API_KEY;
   const apiKeyFromConfig = config.web?.apiKey;
   const apiKeyConfigured = apiKeyFromEnv || apiKeyFromConfig;
-  
   if (apiKeyConfigured) {
     console.log(`🔒 API authentication: ENABLED`);
-    console.log(`   Source: ${apiKeyFromEnv ? '.env file (WEB_API_KEY)' : 'config.web.apiKey'}`);
+    console.log(`Source: ${apiKeyFromEnv ? '.env file (WEB_API_KEY)' : 'config.web.apiKey'}`);
   } else {
-    console.log(`⚠️  API authentication: DISABLED`);
-    console.log(`   To enable: Set WEB_API_KEY in your .env file`);
+    console.log(`⚠️ API authentication: DISABLED (development mode)`);
+    console.log(`To enable: Set WEB_API_KEY in your .env file`);
   }
   
   console.log(`\n💡 To access from other devices on your network:`);
-  console.log(`   1. Make sure devices are on the same WiFi/network`);
-  console.log(`   2. Open browser and go to: http://${localIP}:${PORT}`);
-  console.log(`   3. If blocked, allow port ${PORT} through firewall\n`);
+  console.log(`1. Make sure devices are on the same WiFi/network`);
+  console.log(`2. Open browser and go to: http://${localIP}:${PORT}`);
+  console.log(`3. If blocked, allow port ${PORT} through firewall\n`);
 });
 
 module.exports = app;
