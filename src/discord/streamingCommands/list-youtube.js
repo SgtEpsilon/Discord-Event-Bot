@@ -28,13 +28,19 @@ module.exports = {
         const channelDetails = [];
         
         for (const channelId of guildConfig.youtube.channels) {
-            const channelName = await youtubeMonitor.getChannelName(channelId);
+            let channelName;
+            try {
+                channelName = await youtubeMonitor.getChannelName(channelId);
+            } catch {
+                channelName = 'Unknown Channel';
+            }
             channelDetails.push(`• **${channelName}**\n  ID: \`${channelId}\``);
         }
-        
+ 
+       const fieldValue = channelDetails.join('\n\n') || 'None'; 
         embed.addFields({
             name: 'Channels',
-            value: channelDetails.join('\n\n') || 'None',
+           value: fieldValue.length > 1024 ? fieldValue.slice(0, 1021)  '...' : fieldValue
             inline: false
         });
         
@@ -49,5 +55,9 @@ module.exports = {
         embed.setFooter({ text: 'Checked every 5 minutes • RSS-based (no API quotas!)' });
         
         await interaction.editReply({ embeds: [embed] });
+        } catch (error) {
+            console.error('[Command] Error listing YouTube channels:', error);
+            await interaction.editReply('❌ An error occurred while fetching YouTube channels.');
+        }
     }
 };

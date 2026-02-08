@@ -27,7 +27,8 @@ module.exports = {
         }
         
         await interaction.deferReply({ ephemeral: true });
-        
+
+        try {        
         const channelId = await youtubeMonitor.extractChannelId(input);
         
         if (!channelId) {
@@ -47,5 +48,9 @@ module.exports = {
         );
         
         console.log(`[Command] Added YouTube channel ${channelId} (${channelName}) in guild ${interaction.guildId}`);
+        } catch (error) {
+            console.error('[Command] Error adding YouTube channel:', error);
+            await interaction.editReply('❌ An error occurred while adding the YouTube channel. Please try again.');
+        }
     }
 };

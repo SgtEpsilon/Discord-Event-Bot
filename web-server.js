@@ -8,6 +8,7 @@ const { config } = require('./src/config');
 const EventManager = require('./src/services/eventManager');
 const PresetManager = require('./src/services/presetManager');
 const CalendarService = require('./src/services/calendar');
+const EventsConfig = require('./src/services/eventsConfig');
 
 const app = express();
 const PORT = process.env.WEB_PORT || 3000;
@@ -24,6 +25,9 @@ const calendarService = new CalendarService(
 );
 const eventManager = new EventManager(config.files.events, calendarService);
 const presetManager = new PresetManager(config.files.presets);
+const eventsConfig = new EventsConfig(
+    config.files.eventsConfig || path.join(__dirname, 'data/events-config.json')
+);
 
 // ==========================================
 // API ROUTES
@@ -257,6 +261,66 @@ app.get('/api/stats', (req, res) => {
         stats.totalPresets = presetManager.getPresetCount();
         
         res.json({ success: true, stats });
+    } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+// Get event channel configuration for a guild
+app.get('/api/event-channel/:guildId', (req, res) => {
+    try {
+        const guildId = req.params.guildId;
+        const channelId = eventsConfig.getEventChannel(guildId);
+        const hasChannel = eventsConfig.hasEventChannel(guildId);
+        
+        res.json({ 
+            success: true, 
+            guildId,
+            channelId,
+            hasChannel
+        });
+    } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+// Set event channel for a guild
+app.post('/api/event-channel/:guildId', (req, res) => {
+    try {
+        const guildId = req.params.guildId;
+        const { channelId } = req.body;
+        
+        if (!channelId) {
+            return res.status(400).json({ 
+                success: false, 
+                error: 'channelId is required' 
+            });
+        }
+        
+        const config = eventsConfig.setEventChannel(guildId, channelId);
+        
+        res.json({ 
+            success: true, 
+            message: 'Event channel set successfully',
+            config
+        });
+    } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+// Clear event channel for a guild
+app.delete('/api/event-channel/:guildId', (req, res) => {
+    try {
+        const guildId = req.params.guildId;
+        
+        const config = eventsConfig.removeEventChannel(guildId);
+        
+        res.json({ 
+            success: true, 
+            message: 'Event channel cleared successfully',
+            config
+        });
     } catch (error) {
         res.status(500).json({ success: false, error: error.message });
     }

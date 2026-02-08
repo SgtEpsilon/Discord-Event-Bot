@@ -8,6 +8,7 @@ const { config, validateConfig } = require('./config');
 const CalendarService = require('./services/calendar');
 const EventManager = require('./services/eventManager');
 const PresetManager = require('./services/presetManager');
+const EventsConfig = require('./services/eventsConfig');
 
 // Streaming services
 const StreamingConfigManager = require('./services/streamingConfig');
@@ -31,6 +32,9 @@ const calendarService = new CalendarService(
 );
 const eventManager = new EventManager(config.files.events, calendarService);
 const presetManager = new PresetManager(config.files.presets);
+const eventsConfig = new EventsConfig(
+    config.files.eventsConfig || path.join(__dirname, '../data/events-config.json')
+);
 
 // Initialize streaming services
 const streamingConfig = new StreamingConfigManager(
@@ -249,6 +253,7 @@ client.on('interactionCreate', async interaction => {
             eventManager,
             presetManager,
             calendarService,
+            eventsConfig,
             parseDateTime,
             startAutoSync,
             stopAutoSync,
@@ -350,6 +355,9 @@ client.on('guildDelete', async (guild) => {
     const { deleteGuildConfig } = require('./utils/config');
     deleteGuildConfig(guild.id);
     
+    // Clean up events config
+    eventsConfig.deleteGuildConfig(guild.id);
+    
     // Clean up streaming config
     streamingConfig.deleteGuildConfig(guild.id);
     
@@ -370,6 +378,11 @@ module.exports = {
     presetManager,
     calendarService,
     streamingConfig,
-    twitchMonitor,
-    youtubeMonitor
+    // Use getters to return current runtime values instead of initial nulls
+    get twitchMonitor() {
+        return twitchMonitor;
+    },
+    get youtubeMonitor() {
+        return youtubeMonitor;
+    }
 };

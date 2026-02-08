@@ -1,194 +1,147 @@
-// src/services/syncService.js
-
-class SyncService {
-    constructor(eventManager, calendarService) {
-        this.eventManager = eventManager;
-        this.calendarService = calendarService;
-        this.autoSyncInterval = null;
-        this.autoSyncChannelId = null;
-        this.autoSyncGuildId = null;
-    }
-
-    /**
-     * Sync events from Google Calendar to Discord
-     * @param {string} channelId - Discord channel ID
-     * @param {string} guildId - Discord guild ID
-     * @param {string} calendarFilter - Optional calendar name filter
-     * @param {number} hoursAhead - How many hours ahead to fetch events (default: 168 = 7 days)
-     * @returns {Promise<{success: boolean, message: string, events: Array, calendars?: Array}>}
-     */
-    async syncFromCalendar(channelId, guildId, calendarFilter = null, hoursAhead = 168) {
-        if (!this.calendarService.isEnabled()) {
-            console.error('[Sync] Google Calendar not configured');
-            return { 
-                success: false, 
-                message: 'Google Calendar not configured', 
-                events: [] 
-            };
-        }
-
-        try {
-            const now = new Date();
-            const futureDate = new Date(now.getTime() + (hoursAhead * 60 * 60 * 1000));
-
-            const importedEvents = [];
-            const calendars = this.calendarService.getCalendars();
-            
-            let calendarsToSync = calendars;
-            if (calendarFilter) {
-                calendarsToSync = calendars.filter(cal => 
-                    cal.name.toLowerCase().includes(calendarFilter.toLowerCase()) ||
-                    cal.id.toLowerCase().includes(calendarFilter.toLowerCase())
-                );
-                
-                if (calendarsToSync.length === 0) {
-                    return { 
-                        success: false, 
-                        message: `No calendar found matching "${calendarFilter}"`, 
-                        events: [] 
-                    };
-                }
-            }
-
-            console.log(`[Sync] Syncing from ${calendarsToSync.length} calendar(s): ${calendarsToSync.map(c => c.name).join(', ')}`);
-
-            for (const cal of calendarsToSync) {
-                console.log(`[Sync] Fetching events from "${cal.name}" (${cal.id})`);
-                
-                try {
-                    const calendarEvents = await this.calendarService.syncEvents(
-                        cal.id,
-                        now.toISOString(),
-                        futureDate.toISOString()
-                    );
-
-                    console.log(`[Sync] Found ${calendarEvents.length} events in "${cal.name}"`);
-
-                    for (const calEvent of calendarEvents) {
-                        if (!calEvent.start || !calEvent.start.dateTime) {
-                            console.log(`[Sync] Skipping all-day event: ${calEvent.summary}`);
-                            continue;
-                        }
-
-                        // Check if event already imported
-                        const allEvents = this.eventManager.getAllEvents();
-                        const existingEvent = Object.values(allEvents).find(e => 
-                            e.calendarEventId === calEvent.id ||
-                            e.calendarSourceId === cal.id + '_' + calEvent.id
-                        );
-                        
-                        if (existingEvent) {
-                            console.log(`[Sync] Event already exists: ${calEvent.summary}`);
-                            continue;
-                        }
-
-                        const startTime = new Date(calEvent.start.dateTime);
-                        const endTime = new Date(calEvent.end.dateTime);
-                        const durationMinutes = Math.round((endTime - startTime) / 1000 / 60);
-
-                        const event = this.eventManager.importCalendarEvent({
-                            title: calEvent.summary || 'Imported Event',
-                            description: calEvent.description || `Imported from ${cal.name}`,
-                            dateTime: startTime.toISOString(),
-                            duration: durationMinutes,
-                            calendarEventId: calEvent.id,
-                            calendarSourceId: cal.id + '_' + calEvent.id,
-                            calendarSource: cal.name,
-                            calendarLink: calEvent.htmlLink,
-                            channelId,
-                            guildId
-                        });
-
-                        importedEvents.push(event);
-                        console.log(`[Sync] Imported from "${cal.name}": ${calEvent.summary}`);
-                    }
-                } catch (error) {
-                    console.error(`[Sync] Error fetching from "${cal.name}": ${error.message}`);
-                }
-            }
-
-            const calendarNames = calendarsToSync.length === 1 
-                ? calendarsToSync[0].name 
-                : `${calendarsToSync.length} calendars`;
-                
-            console.log(`[Sync] ✅ Imported ${importedEvents.length} new events from ${calendarNames}`);
-
-            return {
-                success: true,
-                message: `Imported ${importedEvents.length} events from ${calendarNames}`,
-                events: importedEvents,
-                calendars: calendarsToSync.map(c => c.name)
-            };
-
-        } catch (error) {
-            console.error('[Sync] ❌ Error syncing from Google Calendar:', error.message);
-            return {
-                success: false,
-                message: `Failed to sync: ${error.message}`,
-                events: []
-            };
-        }
-    }
-
-    /**
-     * Start automatic synchronization
-     * @param {string} channelId - Discord channel ID
-     * @param {string} guildId - Discord guild ID
-     */
-    startAutoSync(channelId, guildId, callback) {
-        this.autoSyncChannelId = channelId;
-        this.autoSyncGuildId = guildId;
-        
-        // Initial sync
-        this.syncFromCalendar(channelId, guildId).then(result => {
-            console.log(`[AutoSync] Initial sync: ${result.message}`);
-            if (callback && result.success && result.events.length > 0) {
-                callback(result.events);
-            }
-        });
-
-        // Set up interval (every hour)
-        this.autoSyncInterval = setInterval(async () => {
-            console.log('[AutoSync] Running scheduled sync...');
-            const result = await this.syncFromCalendar(channelId, guildId);
-            
-            if (result.success && result.events.length > 0 && callback) {
-                callback(result.events);
-                console.log(`[AutoSync] ✅ Posted ${result.events.length} new events`);
-            }
-        }, 60 * 60 * 1000); // 1 hour
-
-        console.log('[AutoSync] ✅ Auto-sync enabled');
-    }
-
-    /**
-     * Stop automatic synchronization
-     */
-    stopAutoSync() {
-        if (this.autoSyncInterval) {
-            clearInterval(this.autoSyncInterval);
-            this.autoSyncInterval = null;
-            this.autoSyncChannelId = null;
-            this.autoSyncGuildId = null;
-            console.log('[AutoSync] ❌ Auto-sync disabled');
-        }
-    }
-
-    /**
-     * Get auto-sync status
-     * @returns {boolean}
-     */
-    isAutoSyncEnabled() {
-        return this.autoSyncInterval !== null;
-    }
-
-    /**
-     * Get auto-sync interval reference
-     * @returns {NodeJS.Timeout|null}
-     */
-    getAutoSyncInterval() {
-        return this.autoSyncInterval;
-    }
+// src/discord/interactionHandlers.js
+/**
+Handle button interactions for event signups
+*/
+async function handleButtonInteraction(interaction, context) {
+  const { eventManager, EmbedBuilder, ButtonBuilder } = context;
+  const customId = interaction.customId;
+  console.log(`[Button Click] CustomId: "${customId}"`);
+  let action, eventId, roleName;
+  // Parse button custom ID
+  if (customId.startsWith('leave_')) {
+    action = 'leave';
+    eventId = customId.substring(6);
+    roleName = null;
+  } else if (customId.startsWith('signup_')) {
+    action = 'signup';
+    const withoutAction = customId.substring(7);
+    const lastUnderscore = withoutAction.lastIndexOf('_');
+    eventId = withoutAction.substring(0, lastUnderscore);
+    roleName = withoutAction.substring(lastUnderscore + 1);
+  } else {
+    console.error(`[ERROR] Unknown action in customId: ${customId}`);
+    return interaction.reply({
+      content: '❌ Invalid button action.',
+      ephemeral: true
+    });
+  }
+  console.log(`[Parse] Action: "${action}" | EventId: "${eventId}" | RoleName: "${roleName}"`);
+  const event = eventManager.getEvent(eventId);
+  if (!event) {
+    console.error(`[ERROR] Event "${eventId}" not found`);
+    return interaction.reply({
+      content: '❌ Event not found. The event may have been deleted.',
+      ephemeral: true
+    });
+  }
+  console.log(`[Found] Event "${event.title}" (ID: ${eventId})`);
+  if (action === 'signup') {
+    return handleSignup(interaction, event, roleName, { eventManager, EmbedBuilder, ButtonBuilder });
+  } else if (action === 'leave') {
+    return handleLeave(interaction, event, { eventManager, EmbedBuilder, ButtonBuilder });
+  }
 }
 
-module.exports = SyncService;
+/**
+Handle user signup for a role
+*/
+async function handleSignup(interaction, event, roleName, context) {
+  const { eventManager, EmbedBuilder, ButtonBuilder } = context;
+  const role = event.roles.find(r => r.name === roleName);
+  if (!role) {
+    return interaction.reply({
+      content: '❌ Role not found.',
+      ephemeral: true
+    });
+  }
+  // Already signed up
+  if (event.signups[roleName]?.includes(interaction.user.id)) {
+    return interaction.reply({
+      content: `✅ You're already signed up as ${role.emoji} ${roleName}!`,
+      ephemeral: true
+    });
+  }
+  // Role full
+  if (role.maxSlots && event.signups[roleName]?.length >= role.maxSlots) {
+    return interaction.reply({
+      content: `❌ ${role.emoji} ${roleName} is full!`,
+      ephemeral: true
+    });
+  }
+  // Remove user from all other roles
+  eventManager.removeUser(event.id, interaction.user.id);
+  // ✅ FIXED ARGUMENT ORDER
+  eventManager.signupUser(
+    event.id,
+    interaction.user.id, // userId
+    roleName              // roleName
+  );
+  // Update message
+  const updatedEvent = eventManager.getEvent(event.id);
+  const updatedEmbed = EmbedBuilder.createEventEmbed(updatedEvent);
+  const buttons = ButtonBuilder.createSignupButtons(updatedEvent);
+  await interaction.update({
+    embeds: [updatedEmbed],
+    components: buttons || []
+  });
+  await interaction.followUp({
+    content: `✅ Signed up as ${role.emoji} ${roleName}!`,
+    ephemeral: true
+  });
+}
+
+/**
+Handle user leaving an event
+*/
+async function handleLeave(interaction, event, context) {
+  const { eventManager, EmbedBuilder, ButtonBuilder } = context;
+  // ✅ FIXED: Properly destructure removeUser return value ({ removed, event })
+  const { removed, event: updatedEvent } = eventManager.removeUser(event.id, interaction.user.id);
+  
+  if (!removed) {
+    return interaction.reply({
+      content: '❌ You were not signed up for this event.',
+      ephemeral: true
+    });
+  }
+
+  // Use updatedEvent returned directly from removeUser (avoids redundant lookup)
+  const updatedEmbed = EmbedBuilder.createEventEmbed(updatedEvent);
+  const buttons = ButtonBuilder.createSignupButtons(updatedEvent);
+  
+  await interaction.update({
+    embeds: [updatedEmbed],
+    components: buttons || []
+  });
+  
+  await interaction.followUp({
+    content: '✅ You have left the event.',
+    ephemeral: true
+  });
+}
+
+/**
+Handle autocomplete interactions
+*/
+async function handleAutocomplete(interaction, context) {
+  const { presetManager } = context;
+  if (interaction.commandName === 'preset' || interaction.commandName === 'deletepreset') {
+    const focusedValue = interaction.options.getFocused();
+    const presets = presetManager.loadPresets();
+    const choices = Object.keys(presets).filter(choice =>
+      choice.toLowerCase().includes(focusedValue.toLowerCase())
+    );
+
+    await interaction.respond(
+      choices.slice(0, 25).map(choice => ({
+        name: choice,
+        value: choice
+      }))
+    );
+  }
+}
+
+module.exports = {
+  handleButtonInteraction,
+  handleAutocomplete
+};

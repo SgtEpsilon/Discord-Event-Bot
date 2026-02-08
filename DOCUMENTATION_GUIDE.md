@@ -279,7 +279,6 @@ mv PRESET_API_REFERENCE.md docs-archive/
 mv PRESETS_GUIDE.md docs-archive/
 mv QUICKSTART.md docs-archive/
 mv TIMEZONE_GUIDE.md docs-archive/
-mv TROUBLESHOOTING.md docs-archive/
 mv WEB_SETUP_COMPLETE.md docs-archive/
 
 # Or delete them

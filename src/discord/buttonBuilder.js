@@ -24,9 +24,10 @@ class DiscordButtonBuilder {
             
             currentRow.addComponents(button);
             buttonsInRow++;
+
             
             // Discord limit: 5 buttons per row
-            if (buttonsInRow === 5 || index === event.roles.length - 1) {
+            if (buttonsInRow === 5) {
                 rows.push(currentRow);
                 currentRow = new ActionRowBuilder();
                 buttonsInRow = 0;
@@ -39,16 +40,20 @@ class DiscordButtonBuilder {
             .setLabel('❌ Leave Event')
             .setStyle(ButtonStyle.Danger);
         
-        if (buttonsInRow === 0) {
+        if (buttonsInRow > 0 && buttonsInRow < 5) {
+            // Space in the current row — add leave button there
             currentRow.addComponents(leaveButton);
             rows.push(currentRow);
         } else {
-            rows[rows.length - 1].addComponents(leaveButton);
+            // Current row is empty (just reset) or full — push pending row if non-empty, then new row for leave
+            if (buttonsInRow > 0) rows.push(currentRow);
+            const leaveRow = new ActionRowBuilder().addComponents(leaveButton);
+            rows.push(leaveRow);
         }
         
         return rows;
     }
-    
+
     /**
      * Parse button custom ID
      */

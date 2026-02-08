@@ -58,7 +58,7 @@ class CalendarService {
      * Create event in Google Calendar
      */
     async createEvent(event) {
-        if (!this.isEnabled()) return null;
+        if (!this.isEnabled() || this.calendars.length === 0) return null;
         
         try {
             const endTime = new Date(new Date(event.dateTime).getTime() + (event.duration || 60) * 60000);
