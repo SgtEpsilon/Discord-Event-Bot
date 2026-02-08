@@ -113,7 +113,11 @@ function startAutoSync(channelId, guildId) {
   syncFromCalendar(channelId, guildId).catch(console.error);
   autoSyncInterval = setInterval(async () => {
     console.log('[AutoSync] Running scheduled sync...');
-    await syncFromCalendar(channelId, guildId);
+    try {
+      await syncFromCalendar(channelId, guildId);
+    } catch (error) {
+      console.error('[AutoSync] ❌ Error during scheduled sync:', error);
+    }
   }, config.bot.autoSyncInterval);
   console.log('[AutoSync] ✅ Auto-sync enabled');
 }
@@ -322,16 +326,18 @@ client.on('interactionCreate', async (interaction) => {
 });
 // Handle guild removal
 client.on('guildDelete', async (guild) => {
-  // Clean up event config
-  const { deleteGuildConfig } = require('./utils/config');
-  deleteGuildConfig(guild.id);
-  // Clean up events config
-  eventsConfig.deleteGuildConfig(guild.id);
-
-  // Clean up streaming config
-  streamingConfig.deleteGuildConfig(guild.id);
-
-  console.log(`✅ Bot removed from guild ${guild.name} (${guild.id}) - configs cleaned up`);
+  // Clean up configs using service methods only (no external require)
+  try {
+    // Clean up events config
+    eventsConfig.deleteGuildConfig(guild.id);
+    
+    // Clean up streaming config
+    streamingConfig.deleteGuildConfig(guild.id);
+    
+    console.log(`✅ Bot removed from guild ${guild.name} (${guild.id}) - configs cleaned up`);
+  } catch (error) {
+    console.error(`❌ Error cleaning up configs for guild ${guild.id}:`, error);
+  }
 });
 // Login
 client.login(config.discord.token).catch(error => {

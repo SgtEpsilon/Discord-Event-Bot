@@ -3,6 +3,12 @@ const express = require('express');
 const path = require('path');
 const cors = require('cors');
 require('dotenv').config();
+// web-server.js - Add after require('dotenv').config()
+console.log('✅ WEB_API_KEY loaded from .env:', process.env.WEB_API_KEY ? 'YES' : 'NO');
+if (process.env.WEB_API_KEY) {
+  console.log('🔑 Key length:', process.env.WEB_API_KEY.length);
+  console.log('🔑 First 4 chars:', process.env.WEB_API_KEY.substring(0, 4) + '...');
+}
 const { config } = require('./src/config');
 const EventManager = require('./src/services/eventManager');
 const PresetManager = require('./src/services/presetManager');
@@ -16,6 +22,65 @@ const PORT = process.env.WEB_PORT || 3000;
 app.use(cors());
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
+
+// ==========================================
+// AUTHENTICATION MIDDLEWARE
+// ==========================================
+
+/**
+ * Validate API key from X-API-Key header
+ * Priority order:
+ * 1. WEB_API_KEY environment variable (from .env file)
+ * 2. config.web.apiKey (from config which also reads from .env)
+ * @returns {Function} Express middleware
+ */
+function verifyApiKey() {
+  // Check environment variable first (from .env file)
+  const apiKeyFromEnv = process.env.WEB_API_KEY;
+  
+  // Fallback to config (which also reads from .env)
+  const apiKeyFromConfig = config.web?.apiKey;
+  
+  // Use the first available key
+  const validApiKey = apiKeyFromEnv || apiKeyFromConfig;
+  
+  return (req, res, next) => {
+    // Skip auth if no API key is configured (development mode)
+    if (!validApiKey) {
+      console.warn('[Auth] No API key configured - allowing unauthenticated access');
+      console.warn('[Auth] To enable authentication, set WEB_API_KEY in your .env file');
+      return next();
+    }
+    
+    const apiKey = req.headers['x-api-key'] || req.headers['authorization']?.replace('Bearer ', '');
+    
+    if (!apiKey) {
+      return res.status(401).json({ 
+        success: false, 
+        error: 'Missing authentication. Please provide X-API-Key header or Authorization: Bearer <token>' 
+      });
+    }
+    
+    if (apiKey !== validApiKey) {
+      return res.status(401).json({ 
+        success: false, 
+        error: 'Invalid API key' 
+      });
+    }
+    
+    next();
+  };
+}
+
+/**
+ * Check if user has permission to manage the specified guild
+ */
+function authorizeGuildAccess() {
+  return (req, res, next) => {
+    // Basic authorization: if API key is valid, allow access to all guilds
+    next();
+  };
+}
 
 // Initialize services
 const calendarService = new CalendarService(
@@ -31,6 +96,18 @@ const eventsConfig = new EventsConfig(
 // ==========================================
 // API ROUTES
 // ==========================================
+
+// Health check (public - no auth required)
+app.get('/api/health', (req, res) => {
+  res.json({
+    success: true,
+    status: 'healthy',
+    timestamp: new Date().toISOString()
+  });
+});
+
+// All /api/* routes require authentication (except health check)
+app.use('/api', verifyApiKey());
 
 // Get all events
 app.get('/api/events', (req, res) => {
@@ -65,13 +142,25 @@ app.post('/api/events', async (req, res) => {
     const { title, description, dateTime, duration, maxParticipants, roles } = req.body;
     
     if (!title || !dateTime) {
-      return res.status(400).json({ success: false, error: 'Title and dateTime are required' });
+      return res.status(400).json({ 
+        success: false, 
+        error: 'Title and dateTime are required' 
+      });
     }
-
+    
+    // Validate dateTime before passing to createEvent
+    const parsedDate = new Date(dateTime);
+    if (isNaN(parsedDate.getTime())) {
+      return res.status(400).json({ 
+        success: false, 
+        error: `Invalid dateTime format: "${dateTime}". Please provide a valid ISO 8601 date/time string or timestamp.` 
+      });
+    }
+    
     const event = await eventManager.createEvent({
       title,
       description: description || '',
-      dateTime: new Date(dateTime).toISOString(),
+      dateTime: parsedDate.toISOString(),
       duration: parseInt(duration) || 60,
       maxParticipants: parseInt(maxParticipants) || 0,
       roles: roles || [],
@@ -100,7 +189,19 @@ app.put('/api/events/:id', (req, res) => {
     const updates = {};
     if (title) updates.title = title;
     if (description !== undefined) updates.description = description;
-    if (dateTime) updates.dateTime = new Date(dateTime).toISOString();
+    
+    // Validate dateTime if provided
+    if (dateTime) {
+      const parsedDate = new Date(dateTime);
+      if (isNaN(parsedDate.getTime())) {
+        return res.status(400).json({ 
+          success: false, 
+          error: `Invalid dateTime format: "${dateTime}"` 
+        });
+      }
+      updates.dateTime = parsedDate.toISOString();
+    }
+    
     if (duration !== undefined) updates.duration = parseInt(duration);
     if (maxParticipants !== undefined) updates.maxParticipants = parseInt(maxParticipants);
     if (roles) updates.roles = roles;
@@ -228,6 +329,15 @@ app.post('/api/events/from-preset', async (req, res) => {
         error: 'Preset name and dateTime are required' 
       });
     }
+    
+    // Validate dateTime before using
+    const parsedDate = new Date(dateTime);
+    if (isNaN(parsedDate.getTime())) {
+      return res.status(400).json({ 
+        success: false, 
+        error: `Invalid dateTime format: "${dateTime}"` 
+      });
+    }
 
     const preset = presetManager.getPreset(presetName);
     
@@ -237,18 +347,16 @@ app.post('/api/events/from-preset', async (req, res) => {
 
     const event = await eventManager.createFromPreset(
       preset,
-      dateTime,
+      parsedDate.toISOString(),
       description
     );
 
-    // Await the update and re-fetch the event to get the updated record
     await eventManager.updateEvent(event.id, {
       createdBy: 'web_interface',
       channelId: null,
       guildId: null
     });
 
-    // Fetch the updated event with createdBy/channelId/guildId populated
     const updatedEvent = eventManager.getEvent(event.id);
 
     res.json({ success: true, event: updatedEvent });
@@ -270,7 +378,7 @@ app.get('/api/stats', (req, res) => {
 });
 
 // Get event channel configuration for a guild
-app.get('/api/event-channel/:guildId', (req, res) => {
+app.get('/api/event-channel/:guildId', authorizeGuildAccess(), (req, res) => {
   try {
     const guildId = req.params.guildId;
     const channelId = eventsConfig.getEventChannel(guildId);
@@ -288,7 +396,7 @@ app.get('/api/event-channel/:guildId', (req, res) => {
 });
 
 // Set event channel for a guild
-app.post('/api/event-channel/:guildId', (req, res) => {
+app.post('/api/event-channel/:guildId', authorizeGuildAccess(), (req, res) => {
   try {
     const guildId = req.params.guildId;
     const { channelId } = req.body;
@@ -313,7 +421,7 @@ app.post('/api/event-channel/:guildId', (req, res) => {
 });
 
 // Clear event channel for a guild
-app.delete('/api/event-channel/:guildId', (req, res) => {
+app.delete('/api/event-channel/:guildId', authorizeGuildAccess(), (req, res) => {
   try {
     const guildId = req.params.guildId;
     const config = eventsConfig.removeEventChannel(guildId);
@@ -326,15 +434,6 @@ app.delete('/api/event-channel/:guildId', (req, res) => {
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
-});
-
-// Health check
-app.get('/api/health', (req, res) => {
-  res.json({
-    success: true,
-    status: 'healthy',
-    timestamp: new Date().toISOString()
-  });
 });
 
 // Serve main page
@@ -366,6 +465,20 @@ app.listen(PORT, '0.0.0.0', () => {
   console.log(`📱 Network access: http://${localIP}:${PORT}`);
   console.log(`📊 API endpoint:   http://localhost:${PORT}/api`);
   console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
+  
+  // Show auth status
+  const apiKeyFromEnv = process.env.WEB_API_KEY;
+  const apiKeyFromConfig = config.web?.apiKey;
+  const apiKeyConfigured = apiKeyFromEnv || apiKeyFromConfig;
+  
+  if (apiKeyConfigured) {
+    console.log(`🔒 API authentication: ENABLED`);
+    console.log(`   Source: ${apiKeyFromEnv ? '.env file (WEB_API_KEY)' : 'config.web.apiKey'}`);
+  } else {
+    console.log(`⚠️  API authentication: DISABLED`);
+    console.log(`   To enable: Set WEB_API_KEY in your .env file`);
+  }
+  
   console.log(`\n💡 To access from other devices on your network:`);
   console.log(`   1. Make sure devices are on the same WiFi/network`);
   console.log(`   2. Open browser and go to: http://${localIP}:${PORT}`);

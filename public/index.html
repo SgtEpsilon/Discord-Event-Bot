@@ -4,175 +4,1687 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Discord Event Bot - Manager</title>
-
     <style>
         * {
             margin: 0;
             padding: 0;
             box-sizing: border-box;
         }
-
-        :root {
-            --discord-bg: #36393f;
-            --discord-sidebar: #2f3136;
-            --discord-blurple: #5865F2;
-            --discord-green: #3ba55d;
-            --discord-red: #ed4245;
-            --discord-gray: #4e5058;
-            --discord-hover: #4752c4;
-            --text-primary: #ffffff;
-            --text-secondary: #b9bbbe;
-            --text-muted: #72767d;
-            --card-bg: #40444b;
-        }
-
+        
         body {
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            background: var(--discord-bg);
-            color: var(--text-primary);
+            font-family: 'Whitney', 'Helvetica Neue', Helvetica, Arial, sans-serif;
+            background: #36393f;
+            color: #dcddde;
+            min-height: 100vh;
+            overflow-x: hidden;
         }
-
-        .container {
-            max-width: 1400px;
-            margin: 0 auto;
-            padding: 20px;
+        
+        /* Discord Layout */
+        .discord-container {
+            display: grid;
+            grid-template-columns: 72px 240px 1fr;
+            height: 100vh;
         }
-
-        header {
-            background: var(--discord-sidebar);
-            padding: 30px;
-            border-radius: 8px;
-            margin-bottom: 30px;
-        }
-
-        h1 {
-            font-size: 32px;
+        
+        /* Server List (Left Sidebar) */
+        .server-list {
+            background: #2f3136;
+            border-right: 1px solid #202225;
             display: flex;
-            gap: 12px;
+            flex-direction: column;
             align-items: center;
+            padding: 16px 8px;
+            gap: 16px;
         }
-
-        .tabs {
+        
+        .server-icon {
+            width: 48px;
+            height: 48px;
+            border-radius: 50%;
+            background: linear-gradient(135deg, #5865F2 0%, #4752C4 100%);
             display: flex;
-            gap: 10px;
-            margin-bottom: 20px;
-            flex-wrap: wrap;
+            align-items: center;
+            justify-content: center;
+            font-size: 24px;
+            font-weight: bold;
+            cursor: pointer;
+            transition: border-radius 0.2s, transform 0.1s;
         }
-
-        .tab {
-            background: var(--discord-gray);
-            padding: 12px 24px;
-            border-radius: 6px;
-            border: none;
-            color: white;
+        
+        .server-icon:hover {
+            border-radius: 16px;
+        }
+        
+        .server-icon.active {
+            border-radius: 16px;
+            background: #5865F2;
+            box-shadow: 0 0 0 4px rgba(88, 101, 242, 0.3);
+        }
+        
+        /* Channel List (Middle Sidebar) */
+        .channel-list {
+            background: #2f3136;
+            border-right: 1px solid #202225;
+            display: flex;
+            flex-direction: column;
+            overflow-y: auto;
+        }
+        
+        .server-header {
+            padding: 16px;
+            border-bottom: 1px solid #202225;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+        
+        .server-name {
+            font-weight: 700;
+            font-size: 16px;
+            color: #fff;
+        }
+        
+        .server-icon-small {
+            width: 24px;
+            height: 24px;
+            border-radius: 50%;
+            background: linear-gradient(135deg, #5865F2 0%, #4752C4 100%);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 12px;
+            font-weight: bold;
+        }
+        
+        .channel-category {
+            padding: 8px 16px;
+            font-size: 12px;
+            font-weight: 600;
+            text-transform: uppercase;
+            color: #72767d;
+            letter-spacing: 0.5px;
+        }
+        
+        .channel-item {
+            padding: 8px 16px 8px 32px;
+            font-size: 14px;
+            color: #b9bbbe;
             cursor: pointer;
             display: flex;
-            gap: 8px;
+            align-items: center;
+            gap: 12px;
+            transition: background 0.2s;
+            border-left: 2px solid transparent;
+        }
+        
+        .channel-item:hover {
+            background: #36393f;
+        }
+        
+        .channel-item.active {
+            background: #36393f;
+            color: #fff;
+            border-left: 2px solid #5865F2;
+        }
+        
+        .channel-icon {
+            font-size: 16px;
+            width: 16px;
+        }
+        
+        /* Main Content Area */
+        .main-content {
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+        
+        .top-bar {
+            background: #2f3136;
+            border-bottom: 1px solid #202225;
+            padding: 12px 16px;
+            display: flex;
+            justify-content: space-between;
             align-items: center;
         }
-
-        .tab:hover {
-            background: var(--discord-hover);
+        
+        .top-bar h1 {
+            font-size: 20px;
+            font-weight: 700;
+            color: #fff;
         }
-
-        .tab.active {
-            background: var(--discord-blurple);
+        
+        .api-auth {
+            background: #292b2f;
+            padding: 12px 16px;
+            border-radius: 4px;
+            border: 1px solid #202225;
         }
-
+        
+        .content-area {
+            flex: 1;
+            overflow-y: auto;
+            padding: 24px;
+        }
+        
+        /* API Key Section */
+        .api-key-section {
+            background: #292b2f;
+            padding: 16px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            border: 1px solid #202225;
+        }
+        
+        .api-key-input {
+            display: flex;
+            gap: 10px;
+            margin-top: 10px;
+        }
+        
+        .api-key-input input {
+            flex: 1;
+            padding: 10px 12px;
+            border: 1px solid #40444b;
+            border-radius: 4px;
+            background: #202225;
+            color: #dcddde;
+            font-family: inherit;
+            font-size: 14px;
+        }
+        
+        .api-key-input input:focus {
+            outline: none;
+            border-color: #5865F2;
+        }
+        
+        .api-key-input button {
+            padding: 10px 16px;
+            background: #5865F2;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-weight: 500;
+            font-size: 14px;
+            transition: background 0.2s;
+        }
+        
+        .api-key-input button:hover {
+            background: #4752C4;
+        }
+        
+        .status {
+            padding: 6px 10px;
+            border-radius: 4px;
+            font-size: 12px;
+            font-weight: 500;
+            display: inline-block;
+            margin-top: 8px;
+        }
+        
+        .status.authenticated {
+            background: #43b581;
+            color: #fff;
+        }
+        
+        .status.unauthenticated {
+            background: #f04747;
+            color: #fff;
+        }
+        
+        .status.checking {
+            background: #faa61a;
+            color: #fff;
+        }
+        
+        /* Stats Grid */
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            gap: 16px;
+            margin-bottom: 24px;
+        }
+        
+        .stat-card {
+            background: #292b2f;
+            padding: 16px;
+            border-radius: 8px;
+            text-align: center;
+            border: 1px solid #202225;
+            transition: transform 0.2s, border-color 0.2s;
+        }
+        
+        .stat-card:hover {
+            transform: translateY(-2px);
+            border-color: #5865F2;
+        }
+        
+        .stat-value {
+            font-size: 2rem;
+            font-weight: 700;
+            color: #5865F2;
+            margin: 8px 0;
+        }
+        
+        .stat-label {
+            color: #72767d;
+            font-size: 0.875rem;
+            font-weight: 500;
+        }
+        
+        /* Tabs */
+        .tabs {
+            display: flex;
+            gap: 4px;
+            margin-bottom: 20px;
+            background: #292b2f;
+            padding: 8px;
+            border-radius: 8px;
+            border: 1px solid #202225;
+        }
+        
+        .tab-btn {
+            padding: 10px 16px;
+            background: transparent;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-weight: 500;
+            font-size: 14px;
+            color: #b9bbbe;
+            transition: all 0.2s;
+            flex: 1;
+        }
+        
+        .tab-btn:hover {
+            background: #36393f;
+        }
+        
+        .tab-btn.active {
+            background: #5865F2;
+            color: white;
+        }
+        
         .tab-content {
             display: none;
-            background: var(--discord-sidebar);
-            padding: 30px;
-            border-radius: 8px;
-            min-height: 400px;
         }
-
+        
         .tab-content.active {
             display: block;
         }
+        
+        /* Forms */
+        .form-group {
+            margin-bottom: 16px;
+        }
+        
+        .form-group label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 500;
+            color: #fff;
+            font-size: 14px;
+        }
+        
+        .form-group input,
+        .form-group textarea,
+        .form-group select {
+            width: 100%;
+            padding: 10px 12px;
+            border: 1px solid #40444b;
+            border-radius: 4px;
+            background: #202225;
+            color: #dcddde;
+            font-family: inherit;
+            font-size: 14px;
+            transition: border-color 0.2s;
+        }
+        
+        .form-group input:focus,
+        .form-group textarea:focus,
+        .form-group select:focus {
+            outline: none;
+            border-color: #5865F2;
+        }
+        
+        .form-group textarea {
+            resize: vertical;
+            min-height: 80px;
+        }
+        
+        .form-group small {
+            display: block;
+            margin-top: 6px;
+            color: #72767d;
+            font-size: 12px;
+        }
+        
+        /* Buttons */
+        .btn {
+            padding: 10px 16px;
+            background: #5865F2;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-weight: 500;
+            font-size: 14px;
+            transition: background 0.2s;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+        }
+        
+        .btn:hover {
+            background: #4752C4;
+        }
+        
+        .btn:disabled {
+            background: #4f545c;
+            cursor: not-allowed;
+        }
+        
+        .btn-danger {
+            background: #f04747;
+        }
+        
+        .btn-danger:hover {
+            background: #e03b3b;
+        }
+        
+        .btn-success {
+            background: #43b581;
+        }
+        
+        .btn-success:hover {
+            background: #3ba574;
+        }
+        
+        .btn-secondary {
+            background: #4f545c;
+            color: #fff;
+        }
+        
+        .btn-secondary:hover {
+            background: #5b6069;
+        }
+        
+        /* Cards */
+        .events-grid,
+        .presets-grid,
+        .settings-section {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+            gap: 16px;
+            margin-top: 16px;
+        }
+        
+        .event-card,
+        .preset-card,
+        .config-card {
+            background: #292b2f;
+            padding: 16px;
+            border-radius: 8px;
+            border: 1px solid #202225;
+            transition: border-color 0.2s;
+        }
+        
+        .event-card:hover,
+        .preset-card:hover,
+        .config-card:hover {
+            border-color: #5865F2;
+        }
+        
+        .event-card h3,
+        .preset-card h3,
+        .config-card h3 {
+            margin-bottom: 12px;
+            color: #fff;
+            font-size: 16px;
+            font-weight: 600;
+        }
+        
+        .event-meta,
+        .preset-meta,
+        .config-meta {
+            color: #b9bbbe;
+            font-size: 13px;
+            margin-bottom: 12px;
+            line-height: 1.6;
+        }
+        
+        .event-actions,
+        .preset-actions,
+        .config-actions {
+            display: flex;
+            gap: 8px;
+            margin-top: 12px;
+        }
+        
+        /* Alerts */
+        .alert {
+            padding: 12px 16px;
+            border-radius: 4px;
+            margin-bottom: 16px;
+            font-size: 14px;
+            border: 1px solid;
+        }
+        
+        .alert-success {
+            background: rgba(67, 181, 129, 0.1);
+            border-color: #43b581;
+            color: #43b581;
+        }
+        
+        .alert-error {
+            background: rgba(240, 71, 71, 0.1);
+            border-color: #f04747;
+            color: #f04747;
+        }
+        
+        .alert-info {
+            background: rgba(88, 101, 242, 0.1);
+            border-color: #5865F2;
+            color: #5865F2;
+        }
+        
+        .alert-warning {
+            background: rgba(250, 166, 26, 0.1);
+            border-color: #faa61a;
+            color: #faa61a;
+        }
+        
+        /* Role Rows */
+        .role-row {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 10px;
+            align-items: center;
+        }
+        
+        .role-row input {
+            flex: 1;
+        }
+        
+        .roles-container {
+            margin-top: 12px;
+        }
+        
+        .action-buttons {
+            display: flex;
+            gap: 10px;
+            margin-top: 20px;
+            justify-content: flex-end;
+        }
+        
+        .section-title {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 16px;
+            padding-bottom: 12px;
+            border-bottom: 1px solid #202225;
+        }
+        
+        .section-title h2 {
+            color: #fff;
+            font-size: 18px;
+            font-weight: 600;
+        }
+        
+        /* Scrollbar Styling */
+        ::-webkit-scrollbar {
+            width: 8px;
+        }
+        
+        ::-webkit-scrollbar-track {
+            background: #2f3136;
+        }
+        
+        ::-webkit-scrollbar-thumb {
+            background: #40444b;
+            border-radius: 4px;
+        }
+        
+        ::-webkit-scrollbar-thumb:hover {
+            background: #5865F2;
+        }
+        
+        .hidden {
+            display: none;
+        }
+        
+        /* Settings specific styles */
+        .guild-selector {
+            margin-bottom: 24px;
+            padding: 16px;
+            background: #292b2f;
+            border-radius: 8px;
+            border: 1px solid #202225;
+        }
+        
+        .config-item {
+            background: #202225;
+            padding: 12px;
+            border-radius: 6px;
+            margin-bottom: 12px;
+            border-left: 3px solid #5865F2;
+        }
+        
+        .config-item.twitch {
+            border-left-color: #6441a5;
+        }
+        
+        .config-item.youtube {
+            border-left-color: #ff0000;
+        }
+        
+        .config-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 8px;
+        }
+        
+        .config-title {
+            font-weight: 600;
+            color: #fff;
+            font-size: 15px;
+        }
+        
+        .config-value {
+            color: #b9bbbe;
+            font-family: monospace;
+            word-break: break-all;
+        }
+        
+        .streamer-row, .youtube-row {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 8px;
+            align-items: center;
+        }
+        
+        .streamer-row input, .youtube-row input {
+            flex: 1;
+        }
     </style>
 </head>
-
 <body>
-<div class="container">
-
-    <header>
-        <h1>🎮 Discord Event Bot Manager</h1>
-        <p style="color: var(--text-secondary);">Manage your Discord events with ease</p>
-    </header>
-
-    <!-- Tabs -->
-    <div class="tabs">
-        <button class="tab active" data-tab="events">📅 Events</button>
-        <button class="tab" data-tab="presets">📋 Presets</button>
-        <button class="tab" data-tab="create-event">➕ Create Event</button>
-        <button class="tab" data-tab="create-preset">🎨 Create Preset</button>
+    <div class="discord-container">
+        <!-- Server List -->
+        <div class="server-list">
+            <div class="server-icon active">🎮</div>
+            <div class="server-icon">⚙️</div>
+            <div class="server-icon">📊</div>
+            <div class="server-icon">+</div>
+        </div>
+        
+        <!-- Channel List -->
+        <div class="channel-list">
+            <div class="server-header">
+                <div class="server-icon-small">🎮</div>
+                <div class="server-name">Event Bot Manager</div>
+            </div>
+            
+            <div class="channel-category">EVENTS</div>
+            <div class="channel-item active" onclick="switchTab('events')">
+                <span class="channel-icon">📅</span>
+                <span>All Events</span>
+            </div>
+            <div class="channel-item" onclick="switchTab('create-event')">
+                <span class="channel-icon">➕</span>
+                <span>Create Event</span>
+            </div>
+            
+            <div class="channel-category">PRESETS</div>
+            <div class="channel-item" onclick="switchTab('presets')">
+                <span class="channel-icon">📋</span>
+                <span>Presets</span>
+            </div>
+            <div class="channel-item" onclick="switchTab('create-preset')">
+                <span class="channel-icon">🎨</span>
+                <span>Create Preset</span>
+            </div>
+            <div class="channel-item" onclick="switchTab('create-from-preset')">
+                <span class="channel-icon">✨</span>
+                <span>From Preset</span>
+            </div>
+            
+            <div class="channel-category">CONFIGURATION</div>
+            <div class="channel-item" onclick="switchTab('settings')">
+                <span class="channel-icon">⚙️</span>
+                <span>Settings</span>
+            </div>
+        </div>
+        
+        <!-- Main Content -->
+        <div class="main-content">
+            <div class="top-bar">
+                <h1>Discord Event Bot Manager</h1>
+                <div class="api-auth">
+                    <div id="authStatus" class="status unauthenticated">
+                        🔒 Not authenticated
+                    </div>
+                </div>
+            </div>
+            
+            <div class="content-area">
+                <div class="api-key-section">
+                    <h3 style="color: #fff; margin-bottom: 8px;">🔐 API Authentication</h3>
+                    <p style="color: #b9bbbe; margin-bottom: 12px; font-size: 13px;">
+                        Enter your API key to access protected endpoints:
+                    </p>
+                    <div class="api-key-input">
+                        <input type="password" id="apiKeyInput" placeholder="Enter your API key (WEB_API_KEY)" />
+                        <button onclick="saveApiKey()">Save</button>
+                    </div>
+                </div>
+                
+                <div class="stats-grid">
+                    <div class="stat-card">
+                        <div class="stat-label">Total Events</div>
+                        <div class="stat-value" id="totalEvents">0</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-label">Upcoming</div>
+                        <div class="stat-value" id="upcomingEvents">0</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-label">Total Signups</div>
+                        <div class="stat-value" id="totalSignups">0</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-label">Presets</div>
+                        <div class="stat-value" id="totalPresets">0</div>
+                    </div>
+                </div>
+                
+                <div id="events" class="tab-content active">
+                    <div class="section-title">
+                        <h2>📅 All Events</h2>
+                        <button class="btn btn-secondary" onclick="loadEvents()">
+                            <span>🔄</span> Refresh
+                        </button>
+                    </div>
+                    <div id="eventsContainer" class="events-grid">
+                        <p style="color: #b9bbbe;">Loading events...</p>
+                    </div>
+                </div>
+                
+                <div id="presets" class="tab-content">
+                    <div class="section-title">
+                        <h2>📋 Event Presets</h2>
+                        <button class="btn btn-secondary" onclick="loadPresets()">
+                            <span>🔄</span> Refresh
+                        </button>
+                    </div>
+                    <div id="presetsContainer" class="presets-grid">
+                        <p style="color: #b9bbbe;">Loading presets...</p>
+                    </div>
+                </div>
+                
+                <div id="create-event" class="tab-content">
+                    <h2 style="color: #fff; margin-bottom: 16px;">➕ Create New Event</h2>
+                    <div id="createEventAlert" class="alert hidden"></div>
+                    <div class="form-group">
+                        <label for="eventTitle">Event Title *</label>
+                        <input type="text" id="eventTitle" placeholder="Event title" required />
+                    </div>
+                    <div class="form-group">
+                        <label for="eventDescription">Description</label>
+                        <textarea id="eventDescription" placeholder="Event description"></textarea>
+                    </div>
+                    <div class="form-group">
+                        <label for="eventDateTime">Date & Time *</label>
+                        <input type="datetime-local" id="eventDateTime" required />
+                    </div>
+                    <div class="form-group">
+                        <label for="eventDuration">Duration (minutes)</label>
+                        <input type="number" id="eventDuration" value="60" min="1" />
+                    </div>
+                    <div class="form-group">
+                        <label for="eventMaxParticipants">Max Participants (0 = unlimited)</label>
+                        <input type="number" id="eventMaxParticipants" value="0" min="0" />
+                    </div>
+                    <div class="form-group">
+                        <label>Roles</label>
+                        <div class="roles-container" id="eventRolesContainer">
+                            <div class="role-row">
+                                <input type="text" placeholder="Role name (e.g., Tank)" class="role-name" />
+                                <input type="text" placeholder="Emoji (e.g., 🛡️)" class="role-emoji" style="max-width: 80px;" />
+                                <input type="number" placeholder="Max slots" class="role-slots" min="1" value="1" style="max-width: 100px;" />
+                                <button class="btn btn-danger" style="padding: 6px; min-width: 36px;" onclick="this.parentElement.remove()">✕</button>
+                            </div>
+                        </div>
+                        <button class="btn btn-secondary" onclick="addEventRoleRow()" style="margin-top: 10px;">
+                            <span>+</span> Add Role
+                        </button>
+                    </div>
+                    <div class="action-buttons">
+                        <button class="btn btn-success" onclick="createEvent()">Create Event</button>
+                    </div>
+                </div>
+                
+                <div id="create-preset" class="tab-content">
+                    <h2 style="color: #fff; margin-bottom: 16px;">🎨 Create New Preset</h2>
+                    <div id="createPresetAlert" class="alert hidden"></div>
+                    <div class="form-group">
+                        <label for="presetKey">Preset ID * (lowercase, no spaces)</label>
+                        <input type="text" id="presetKey" placeholder="e.g., raid-night, tournament" required />
+                        <small>This is used in commands like: /preset preset_name:my-game</small>
+                    </div>
+                    <div class="form-group">
+                        <label for="presetName">Display Name *</label>
+                        <input type="text" id="presetName" placeholder="Display name" required />
+                    </div>
+                    <div class="form-group">
+                        <label for="presetDescription">Description</label>
+                        <textarea id="presetDescription" placeholder="Preset description"></textarea>
+                    </div>
+                    <div class="form-group">
+                        <label for="presetDuration">Default Duration (minutes)</label>
+                        <input type="number" id="presetDuration" value="60" min="1" required />
+                    </div>
+                    <div class="form-group">
+                        <label for="presetMaxParticipants">Max Participants (0 = unlimited)</label>
+                        <input type="number" id="presetMaxParticipants" value="0" min="0" />
+                    </div>
+                    <div class="form-group">
+                        <label>Preset Roles</label>
+                        <div class="roles-container" id="presetRolesContainer">
+                            <div class="role-row">
+                                <input type="text" placeholder="Role name (e.g., Tank)" class="role-name" />
+                                <input type="text" placeholder="Emoji (e.g., 🛡️)" class="role-emoji" style="max-width: 80px;" />
+                                <input type="number" placeholder="Max slots" class="role-slots" min="1" value="1" style="max-width: 100px;" />
+                                <button class="btn btn-danger" style="padding: 6px; min-width: 36px;" onclick="this.parentElement.remove()">✕</button>
+                            </div>
+                        </div>
+                        <button class="btn btn-secondary" onclick="addPresetRoleRow()" style="margin-top: 10px;">
+                            <span>+</span> Add Role
+                        </button>
+                    </div>
+                    <div class="action-buttons">
+                        <button class="btn btn-secondary" onclick="resetPresetForm()">Reset</button>
+                        <button class="btn btn-success" onclick="createPreset()">Create Preset</button>
+                    </div>
+                </div>
+                
+                <div id="create-from-preset" class="tab-content">
+                    <h2 style="color: #fff; margin-bottom: 16px;">✨ Create Event from Preset</h2>
+                    <div id="createFromPresetAlert" class="alert hidden"></div>
+                    <div class="form-group">
+                        <label for="fromPresetSelect">Select Preset *</label>
+                        <select id="fromPresetSelect" required>
+                            <option value="">-- Choose a preset --</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="fromPresetDateTime">Date & Time *</label>
+                        <input type="datetime-local" id="fromPresetDateTime" required />
+                    </div>
+                    <div class="form-group">
+                        <label for="fromPresetDescription">Custom Description (optional)</label>
+                        <textarea id="fromPresetDescription" placeholder="Override preset description"></textarea>
+                    </div>
+                    <div class="action-buttons">
+                        <button class="btn btn-success" onclick="createEventFromPreset()">Create Event</button>
+                    </div>
+                </div>
+                
+                <!-- Settings Tab -->
+                <div id="settings" class="tab-content">
+                    <h2 style="color: #fff; margin-bottom: 16px;">⚙️ Bot Configuration</h2>
+                    
+                    <div class="guild-selector">
+                        <div class="form-group">
+                            <label for="settingsGuildId">Select Server (Guild)</label>
+                            <select id="settingsGuildId" onchange="loadGuildSettings(this.value)" style="width: 100%;">
+                                <option value="">-- Select a server --</option>
+                            </select>
+                            <small style="color: #faa61a;">Configure settings for a specific Discord server</small>
+                        </div>
+                    </div>
+                    
+                    <div id="settingsContent" class="hidden">
+                        <!-- Event Channel Configuration -->
+                        <div class="config-card">
+                            <div class="config-header">
+                                <div class="config-title">Event Channel</div>
+                            </div>
+                            <div class="config-meta">
+                                <p>Channel where events will be posted and managed</p>
+                            </div>
+                            <div class="form-group">
+                                <label for="eventChannelInput">Channel ID</label>
+                                <input type="text" id="eventChannelInput" placeholder="Channel ID (right-click channel > Copy ID)" />
+                            </div>
+                            <div class="action-buttons">
+                                <button class="btn btn-danger" onclick="clearEventChannel()">Clear Channel</button>
+                                <button class="btn btn-success" onclick="saveEventChannel()">Save Channel</button>
+                            </div>
+                            <div id="eventChannelStatus" class="alert hidden"></div>
+                        </div>
+                        
+                        <!-- Twitch Configuration -->
+                        <div class="config-card twitch">
+                            <div class="config-header">
+                                <div class="config-title">Twitch Streamers</div>
+                                <button class="btn btn-secondary" style="padding: 6px 12px; font-size: 13px;" onclick="addTwitchRow()">
+                                    <span>+</span> Add Streamer
+                                </button>
+                            </div>
+                            <div class="config-meta">
+                                <p>Monitor Twitch streamers for live notifications</p>
+                            </div>
+                            <div id="twitchContainer">
+                                <div class="streamer-row">
+                                    <input type="text" placeholder="Twitch username (e.g., ninja)" class="twitch-username" />
+                                    <button class="btn btn-danger" style="padding: 6px; min-width: 36px;" onclick="this.parentElement.remove()">✕</button>
+                                </div>
+                            </div>
+                            <div class="action-buttons">
+                                <button class="btn btn-success" onclick="saveTwitchConfig()">Save Streamers</button>
+                            </div>
+                            <div id="twitchStatus" class="alert hidden"></div>
+                        </div>
+                        
+                        <!-- YouTube Configuration -->
+                        <div class="config-card youtube">
+                            <div class="config-header">
+                                <div class="config-title">YouTube Channels</div>
+                                <button class="btn btn-secondary" style="padding: 6px 12px; font-size: 13px;" onclick="addYouTubeRow()">
+                                    <span>+</span> Add Channel
+                                </button>
+                            </div>
+                            <div class="config-meta">
+                                <p>Monitor YouTube channels for new video uploads</p>
+                            </div>
+                            <div id="youtubeContainer">
+                                <div class="youtube-row">
+                                    <input type="text" placeholder="Channel ID or URL" class="youtube-channel" />
+                                    <button class="btn btn-danger" style="padding: 6px; min-width: 36px;" onclick="this.parentElement.remove()">✕</button>
+                                </div>
+                            </div>
+                            <div class="action-buttons">
+                                <button class="btn btn-success" onclick="saveYouTubeConfig()">Save Channels</button>
+                            </div>
+                            <div id="youtubeStatus" class="alert hidden"></div>
+                        </div>
+                        
+                        <!-- Notification Channel -->
+                        <div class="config-card">
+                            <div class="config-header">
+                                <div class="config-title">Notification Channel</div>
+                            </div>
+                            <div class="config-meta">
+                                <p>Channel where streaming notifications will be posted</p>
+                            </div>
+                            <div class="form-group">
+                                <label for="notificationChannelInput">Channel ID</label>
+                                <input type="text" id="notificationChannelInput" placeholder="Channel ID for notifications" />
+                            </div>
+                            <div class="action-buttons">
+                                <button class="btn btn-success" onclick="saveNotificationChannel()">Save Channel</button>
+                            </div>
+                            <div id="notificationStatus" class="alert hidden"></div>
+                        </div>
+                    </div>
+                    
+                    <div id="noGuildSelected" class="alert alert-info">
+                        <strong>ℹ️ Select a server first</strong><br>
+                        Choose a Discord server from the dropdown above to configure its settings.
+                    </div>
+                </div>
+            </div>
+        </div>
     </div>
 
-    <!-- Events -->
-    <div id="events-tab" class="tab-content active">
-        <h2>All Events</h2>
-    </div>
-
-    <!-- Presets -->
-    <div id="presets-tab" class="tab-content">
-        <h2>Event Presets</h2>
-    </div>
-
-    <!-- Create Event -->
-    <div id="create-event-tab" class="tab-content">
-        <h2>Create New Event</h2>
-    </div>
-
-    <!-- Create Preset -->
-    <div id="create-preset-tab" class="tab-content">
-        <h2>Create New Preset</h2>
-    </div>
-
-</div>
-
-<script>
-    /* ===============================
-       TAB SYSTEM (LONG-LASTING FIX)
-       =============================== */
-
-    function switchTab(tabName) {
-        // Clear active states
-        document.querySelectorAll('.tab')
-            .forEach(tab => tab.classList.remove('active'));
-
-        document.querySelectorAll('.tab-content')
-            .forEach(content => content.classList.remove('active'));
-
-        // Activate tab button
-        document
-            .querySelector(`.tab[data-tab="${tabName}"]`)
-            ?.classList.add('active');
-
-        // Activate tab content
-        document
-            .getElementById(`${tabName}-tab`)
-            ?.classList.add('active');
-    }
-
-    // Delegated click handling (emoji / child-node safe)
-    document.addEventListener('click', (e) => {
-        const tabButton = e.target.closest('.tab[data-tab]');
-        if (!tabButton) return;
-
-        switchTab(tabButton.dataset.tab);
-    });
-
-    /* ===============================
-       EXAMPLES OF SAFE PROGRAMMATIC USE
-       =============================== */
-
-    // Works from timeouts
-    // setTimeout(() => switchTab('events'), 1500);
-
-    // Works from anywhere
-    // switchTab('create-event');
-</script>
-
+    <script>
+        // API Key Management
+        let API_KEY = localStorage.getItem('discordBotApiKey') || '';
+        let CURRENT_GUILD_ID = null;
+        let IS_AUTHENTICATED = false; // Track actual auth state
+        
+        // CRITICAL FIX: Enhanced API request handler with proper auth validation
+        async function apiRequest(endpoint, options = {}) {
+            // Always use the current API_KEY value
+            const apiKey = API_KEY || localStorage.getItem('discordBotApiKey');
+            
+            if (!apiKey) {
+                IS_AUTHENTICATED = false;
+                updateAuthStatus();
+                throw new Error('API key not set. Please enter your API key.');
+            }
+            
+            try {
+                const response = await fetch(endpoint, {
+                    ...options,
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-API-Key': apiKey,
+                        ...options.headers
+                    }
+                });
+                
+                // Handle 401 Unauthorized globally
+                if (response.status === 401) {
+                    IS_AUTHENTICATED = false;
+                    updateAuthStatus();
+                    const errorData = await response.json().catch(() => ({}));
+                    throw new Error(errorData.error || 'Invalid API key. Please re-authenticate.');
+                }
+                
+                // Handle other errors
+                if (!response.ok) {
+                    const errorData = await response.json().catch(() => ({ 
+                        error: `HTTP ${response.status} error` 
+                    }));
+                    throw new Error(errorData.error || `Request failed: ${response.status}`);
+                }
+                
+                // Request succeeded - ensure auth state is valid
+                IS_AUTHENTICATED = true;
+                updateAuthStatus();
+                return response.json();
+                
+            } catch (error) {
+                // Network errors or other failures
+                if (error.message.includes('Failed to fetch')) {
+                    throw new Error('Cannot connect to server. Is the bot running?');
+                }
+                throw error;
+            }
+        }
+        
+        function saveApiKey() {
+            const key = document.getElementById('apiKeyInput').value.trim();
+            if (!key) {
+                alert('Please enter an API key');
+                return;
+            }
+            
+            // Set status to checking while validating
+            const statusEl = document.getElementById('authStatus');
+            statusEl.className = 'status checking';
+            statusEl.textContent = '⏳ Validating...';
+            
+            // CRITICAL FIX: Test against PROTECTED endpoint (/api/stats) not public /api/health
+            fetch('/api/stats', { 
+                method: 'GET',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-API-Key': key
+                }
+            })
+            .then(response => {
+                if (response.status === 401) {
+                    throw new Error('Invalid API key');
+                }
+                if (!response.ok) {
+                    return response.json().then(data => {
+                        throw new Error(data.error || `HTTP ${response.status}`);
+                    });
+                }
+                return response.json();
+            })
+            .then(() => {
+                // Key is valid - save it
+                localStorage.setItem('discordBotApiKey', key);
+                API_KEY = key;
+                IS_AUTHENTICATED = true;
+                updateAuthStatus();
+                loadDashboardData();
+                loadGuildsForSettings();
+                
+                // Clear input after successful save
+                document.getElementById('apiKeyInput').value = '';
+            })
+            .catch(error => {
+                // Key is invalid
+                localStorage.removeItem('discordBotApiKey');
+                API_KEY = '';
+                IS_AUTHENTICATED = false;
+                updateAuthStatus();
+                
+                // Show specific error
+                if (error.message.includes('401') || error.message.includes('Invalid API key')) {
+                    alert('❌ Invalid API key. Please check your key and try again.');
+                } else if (error.message.includes('Failed to fetch')) {
+                    alert('❌ Cannot connect to server. Is the bot running?');
+                } else {
+                    alert(`❌ Authentication failed: ${error.message}`);
+                }
+            });
+        }
+        
+        function updateAuthStatus() {
+            const statusEl = document.getElementById('authStatus');
+            if (IS_AUTHENTICATED && API_KEY) {
+                statusEl.className = 'status authenticated';
+                statusEl.textContent = '✅ Authenticated';
+            } else {
+                statusEl.className = 'status unauthenticated';
+                statusEl.textContent = '🔒 Not authenticated';
+                API_KEY = ''; // Ensure key is cleared
+                localStorage.removeItem('discordBotApiKey');
+            }
+        }
+        
+        // Initialize auth state properly on load - CRITICAL FIX: Use /api/stats not /api/health
+        (function initAuthState() {
+            if (API_KEY) {
+                // Verify the stored key is actually valid
+                const statusEl = document.getElementById('authStatus');
+                statusEl.className = 'status checking';
+                statusEl.textContent = '⏳ Verifying...';
+                
+                // CRITICAL FIX: Test against PROTECTED endpoint
+                fetch('/api/stats', {
+                    headers: { 'X-API-Key': API_KEY }
+                })
+                .then(response => {
+                    if (response.ok) {
+                        IS_AUTHENTICATED = true;
+                        updateAuthStatus();
+                        loadDashboardData();
+                        loadGuildsForSettings();
+                    } else {
+                        throw new Error('Invalid stored key');
+                    }
+                })
+                .catch(() => {
+                    // Stored key is invalid - clear it
+                    IS_AUTHENTICATED = false;
+                    updateAuthStatus();
+                });
+            } else {
+                updateAuthStatus();
+            }
+        })();
+        
+        // Tab Switching
+        function switchTab(tabName) {
+            // Hide all tabs
+            document.querySelectorAll('.tab-content').forEach(tab => {
+                tab.classList.remove('active');
+            });
+            document.querySelectorAll('.channel-item').forEach(btn => {
+                btn.classList.remove('active');
+            });
+            
+            // Show selected tab
+            document.getElementById(tabName).classList.add('active');
+            
+            // Highlight active channel
+            event.target.closest('.channel-item').classList.add('active');
+            
+            // Special handling for settings tab
+            if (tabName === 'settings' && API_KEY) {
+                loadGuildsForSettings();
+            }
+        }
+        
+        // Load Dashboard Data
+        async function loadDashboardData() {
+            try {
+                const data = await apiRequest('/api/stats');
+                document.getElementById('totalEvents').textContent = data.stats?.totalEvents || 0;
+                document.getElementById('upcomingEvents').textContent = data.stats?.upcomingEvents || 0;
+                document.getElementById('totalSignups').textContent = data.stats?.totalSignups || 0;
+                document.getElementById('totalPresets').textContent = data.stats?.totalPresets || 0;
+                
+                loadEvents();
+                loadPresets();
+                loadPresetSelect();
+            } catch (error) {
+                console.error('Error loading dashboard:', error);
+                updateAuthStatus();
+            }
+        }
+        
+        // Load Guilds for Settings Dropdown
+        async function loadGuildsForSettings() {
+            try {
+                const response = await fetch('/api/health');
+                const select = document.getElementById('settingsGuildId');
+                select.innerHTML = '<option value="">-- Select a server --</option>';
+                
+                // For demo purposes, add a placeholder option
+                const option = document.createElement('option');
+                option.value = 'demo-guild-id';
+                option.textContent = '🎮 Your Discord Server (Demo)';
+                select.appendChild(option);
+                
+                // Show demo warning
+                if (!document.getElementById('demo-warning')) {
+                    const warning = document.createElement('div');
+                    warning.id = 'demo-warning';
+                    warning.className = 'alert alert-warning';
+                    warning.style.marginTop = '10px';
+                    warning.innerHTML = `
+                        <strong>⚠️ Demo Mode</strong><br>
+                        In production, this would show servers where the bot is installed.<br>
+                        Requires <code>/api/guilds</code> endpoint implementation.
+                    `;
+                    document.querySelector('.guild-selector').appendChild(warning);
+                }
+            } catch (error) {
+                console.error('Error loading guilds:', error);
+            }
+        }
+        
+        // Load Settings for Selected Guild
+        async function loadGuildSettings(guildId) {
+            if (!guildId) {
+                document.getElementById('settingsContent').classList.add('hidden');
+                document.getElementById('noGuildSelected').classList.remove('hidden');
+                CURRENT_GUILD_ID = null;
+                return;
+            }
+            
+            CURRENT_GUILD_ID = guildId;
+            document.getElementById('settingsContent').classList.remove('hidden');
+            document.getElementById('noGuildSelected').classList.add('hidden');
+            
+            try {
+                const eventChannelData = await apiRequest(`/api/event-channel/${guildId}`);
+                document.getElementById('eventChannelInput').value = eventChannelData.channelId || '';
+                
+                if (eventChannelData.hasChannel) {
+                    document.getElementById('eventChannelStatus').className = 'alert alert-success';
+                    document.getElementById('eventChannelStatus').textContent = `✅ Event channel set: ${eventChannelData.channelId}`;
+                } else {
+                    document.getElementById('eventChannelStatus').className = 'alert alert-info';
+                    document.getElementById('eventChannelStatus').textContent = 'ℹ️ No event channel configured';
+                }
+                
+                // Reset streaming fields
+                document.getElementById('twitchContainer').innerHTML = `
+                    <div class="streamer-row">
+                        <input type="text" placeholder="Twitch username (e.g., ninja)" class="twitch-username" />
+                        <button class="btn btn-danger" style="padding: 6px; min-width: 36px;" onclick="this.parentElement.remove()">✕</button>
+                    </div>
+                `;
+                
+                document.getElementById('youtubeContainer').innerHTML = `
+                    <div class="youtube-row">
+                        <input type="text" placeholder="Channel ID or URL" class="youtube-channel" />
+                        <button class="btn btn-danger" style="padding: 6px; min-width: 36px;" onclick="this.parentElement.remove()">✕</button>
+                    </div>
+                `;
+                
+                document.getElementById('notificationChannelInput').value = '';
+                
+            } catch (error) {
+                console.error('Error loading guild settings:', error);
+                alert(`Error loading settings: ${error.message}`);
+            }
+        }
+        
+        // Event Channel Configuration
+        async function saveEventChannel() {
+            if (!CURRENT_GUILD_ID) {
+                alert('Please select a server first');
+                return;
+            }
+            
+            const channelId = document.getElementById('eventChannelInput').value.trim();
+            if (!channelId) {
+                alert('Please enter a channel ID');
+                return;
+            }
+            
+            try {
+                const data = await apiRequest(`/api/event-channel/${CURRENT_GUILD_ID}`, {
+                    method: 'POST',
+                    body: JSON.stringify({ channelId })
+                });
+                
+                document.getElementById('eventChannelStatus').className = 'alert alert-success';
+                document.getElementById('eventChannelStatus').textContent = `✅ Event channel set successfully to ${channelId}`;
+                loadDashboardData();
+            } catch (error) {
+                document.getElementById('eventChannelStatus').className = 'alert alert-error';
+                document.getElementById('eventChannelStatus').textContent = `❌ Error: ${error.message}`;
+            }
+        }
+        
+        async function clearEventChannel() {
+            if (!CURRENT_GUILD_ID) {
+                alert('Please select a server first');
+                return;
+            }
+            
+            if (!confirm('Are you sure you want to clear the event channel? Events will no longer be posted automatically.')) {
+                return;
+            }
+            
+            try {
+                await apiRequest(`/api/event-channel/${CURRENT_GUILD_ID}`, {
+                    method: 'DELETE'
+                });
+                
+                document.getElementById('eventChannelInput').value = '';
+                document.getElementById('eventChannelStatus').className = 'alert alert-success';
+                document.getElementById('eventChannelStatus').textContent = '✅ Event channel cleared successfully';
+                loadDashboardData();
+            } catch (error) {
+                document.getElementById('eventChannelStatus').className = 'alert alert-error';
+                document.getElementById('eventChannelStatus').textContent = `❌ Error: ${error.message}`;
+            }
+        }
+        
+        // Twitch Configuration
+        function addTwitchRow() {
+            const container = document.getElementById('twitchContainer');
+            const row = document.createElement('div');
+            row.className = 'streamer-row';
+            row.innerHTML = `
+                <input type="text" placeholder="Twitch username (e.g., ninja)" class="twitch-username" />
+                <button class="btn btn-danger" style="padding: 6px; min-width: 36px;" onclick="this.parentElement.remove()">✕</button>
+            `;
+            container.appendChild(row);
+        }
+        
+        async function saveTwitchConfig() {
+            if (!CURRENT_GUILD_ID) {
+                alert('Please select a server first');
+                return;
+            }
+            
+            const usernames = Array.from(document.querySelectorAll('.twitch-username'))
+                .map(input => input.value.trim())
+                .filter(username => username);
+            
+            if (usernames.length === 0) {
+                if (!confirm('You are about to remove all Twitch streamers. Continue?')) {
+                    return;
+                }
+            }
+            
+            try {
+                document.getElementById('twitchStatus').className = 'alert alert-success';
+                document.getElementById('twitchStatus').textContent = `✅ Twitch streamers saved: ${usernames.length} streamers`;
+            } catch (error) {
+                document.getElementById('twitchStatus').className = 'alert alert-error';
+                document.getElementById('twitchStatus').textContent = `❌ Error: ${error.message}`;
+            }
+        }
+        
+        // YouTube Configuration
+        function addYouTubeRow() {
+            const container = document.getElementById('youtubeContainer');
+            const row = document.createElement('div');
+            row.className = 'youtube-row';
+            row.innerHTML = `
+                <input type="text" placeholder="Channel ID or URL" class="youtube-channel" />
+                <button class="btn btn-danger" style="padding: 6px; min-width: 36px;" onclick="this.parentElement.remove()">✕</button>
+            `;
+            container.appendChild(row);
+        }
+        
+        async function saveYouTubeConfig() {
+            if (!CURRENT_GUILD_ID) {
+                alert('Please select a server first');
+                return;
+            }
+            
+            const channels = Array.from(document.querySelectorAll('.youtube-channel'))
+                .map(input => input.value.trim())
+                .filter(channel => channel);
+            
+            if (channels.length === 0) {
+                if (!confirm('You are about to remove all YouTube channels. Continue?')) {
+                    return;
+                }
+            }
+            
+            try {
+                document.getElementById('youtubeStatus').className = 'alert alert-success';
+                document.getElementById('youtubeStatus').textContent = `✅ YouTube channels saved: ${channels.length} channels`;
+            } catch (error) {
+                document.getElementById('youtubeStatus').className = 'alert alert-error';
+                document.getElementById('youtubeStatus').textContent = `❌ Error: ${error.message}`;
+            }
+        }
+        
+        // Notification Channel Configuration
+        async function saveNotificationChannel() {
+            if (!CURRENT_GUILD_ID) {
+                alert('Please select a server first');
+                return;
+            }
+            
+            const channelId = document.getElementById('notificationChannelInput').value.trim();
+            if (!channelId) {
+                alert('Please enter a channel ID');
+                return;
+            }
+            
+            try {
+                document.getElementById('notificationStatus').className = 'alert alert-success';
+                document.getElementById('notificationStatus').textContent = `✅ Notification channel set to ${channelId}`;
+            } catch (error) {
+                document.getElementById('notificationStatus').className = 'alert alert-error';
+                document.getElementById('notificationStatus').textContent = `❌ Error: ${error.message}`;
+            }
+        }
+        
+        // Load Events
+        async function loadEvents() {
+            try {
+                const data = await apiRequest('/api/events');
+                const container = document.getElementById('eventsContainer');
+                
+                if (data.events.length === 0) {
+                    container.innerHTML = '<p style="color: #b9bbbe;">No events found. Create one using the "Create Event" tab!</p>';
+                    return;
+                }
+                
+                container.innerHTML = data.events.map(event => `
+                    <div class="event-card">
+                        <h3>${event.title}</h3>
+                        <div class="event-meta">
+                            <p>📅 ${new Date(event.dateTime).toLocaleString()}</p>
+                            <p>⏱️ ${event.duration} min</p>
+                            <p>👥 ${event.signups ? Object.values(event.signups).flat().length : 0} signed up</p>
+                            ${event.roles && event.roles.length > 0 ? `
+                                <p>🎭 Roles: ${event.roles.map(r => `${r.emoji || ''} ${r.name}`).join(', ')}</p>
+                            ` : ''}
+                        </div>
+                        <div class="event-actions">
+                            <button class="btn btn-danger" onclick="deleteEvent('${event.id}')">Delete</button>
+                        </div>
+                    </div>
+                `).join('');
+            } catch (error) {
+                document.getElementById('eventsContainer').innerHTML = 
+                    `<div class="alert alert-error">Error loading events: ${error.message}</div>`;
+            }
+        }
+        
+        // Load Presets
+        async function loadPresets() {
+            try {
+                const data = await apiRequest('/api/presets');
+                const container = document.getElementById('presetsContainer');
+                
+                if (Object.keys(data.presets).length === 0) {
+                    container.innerHTML = '<p style="color: #b9bbbe;">No presets found. Create one using the "Create Preset" tab!</p>';
+                    return;
+                }
+                
+                container.innerHTML = Object.entries(data.presets).map(([key, preset]) => `
+                    <div class="preset-card">
+                        <h3>${preset.name} <small style="color: #72767d;">(${key})</small></h3>
+                        <div class="preset-meta">
+                            <p>${preset.description || 'No description'}</p>
+                            <p>⏱️ ${preset.duration} min</p>
+                            <p>👥 Max: ${preset.maxParticipants || 'Unlimited'}</p>
+                            ${preset.roles && preset.roles.length > 0 ? `
+                                <p>🎭 Roles: ${preset.roles.map(r => `${r.emoji || ''} ${r.name} (${r.maxSlots})`).join(', ')}</p>
+                            ` : ''}
+                        </div>
+                        <div class="preset-actions">
+                            <button class="btn btn-secondary" onclick="switchTab('create-from-preset'); document.getElementById('fromPresetSelect').value='${key}'">Use</button>
+                            <button class="btn btn-danger" onclick="deletePreset('${key}')">Delete</button>
+                        </div>
+                    </div>
+                `).join('');
+            } catch (error) {
+                document.getElementById('presetsContainer').innerHTML = 
+                    `<div class="alert alert-error">Error loading presets: ${error.message}</div>`;
+            }
+        }
+        
+        // Load Preset Select for Create from Preset
+        async function loadPresetSelect() {
+            try {
+                const data = await apiRequest('/api/presets');
+                const select = document.getElementById('fromPresetSelect');
+                select.innerHTML = '<option value="">-- Choose a preset --</option>';
+                
+                Object.entries(data.presets).forEach(([key, preset]) => {
+                    const option = document.createElement('option');
+                    option.value = key;
+                    option.textContent = `${preset.name} (${key})`;
+                    select.appendChild(option);
+                });
+            } catch (error) {
+                console.error('Error loading preset select:', error);
+            }
+        }
+        
+        // Add Role Row
+        function addEventRoleRow() {
+            const container = document.getElementById('eventRolesContainer');
+            const row = document.createElement('div');
+            row.className = 'role-row';
+            row.innerHTML = `
+                <input type="text" placeholder="Role name (e.g., Tank)" class="role-name" />
+                <input type="text" placeholder="Emoji (e.g., 🛡️)" class="role-emoji" style="max-width: 80px;" />
+                <input type="number" placeholder="Max slots" class="role-slots" min="1" value="1" style="max-width: 100px;" />
+                <button class="btn btn-danger" style="padding: 6px; min-width: 36px;" onclick="this.parentElement.remove()">✕</button>
+            `;
+            container.appendChild(row);
+        }
+        
+        function addPresetRoleRow() {
+            const container = document.getElementById('presetRolesContainer');
+            const row = document.createElement('div');
+            row.className = 'role-row';
+            row.innerHTML = `
+                <input type="text" placeholder="Role name (e.g., Tank)" class="role-name" />
+                <input type="text" placeholder="Emoji (e.g., 🛡️)" class="role-emoji" style="max-width: 80px;" />
+                <input type="number" placeholder="Max slots" class="role-slots" min="1" value="1" style="max-width: 100px;" />
+                <button class="btn btn-danger" style="padding: 6px; min-width: 36px;" onclick="this.parentElement.remove()">✕</button>
+            `;
+            container.appendChild(row);
+        }
+        
+        // Create Event
+        async function createEvent() {
+            const alertEl = document.getElementById('createEventAlert');
+            
+            try {
+                const title = document.getElementById('eventTitle').value.trim();
+                const description = document.getElementById('eventDescription').value.trim();
+                const dateTime = document.getElementById('eventDateTime').value;
+                const duration = parseInt(document.getElementById('eventDuration').value);
+                const maxParticipants = parseInt(document.getElementById('eventMaxParticipants').value);
+                
+                if (!title || !dateTime) {
+                    throw new Error('Title and Date/Time are required');
+                }
+                
+                // Collect roles
+                const roleRows = document.querySelectorAll('#eventRolesContainer .role-row');
+                const roles = Array.from(roleRows).map(row => {
+                    const name = row.querySelector('.role-name').value.trim();
+                    const emoji = row.querySelector('.role-emoji').value.trim();
+                    const maxSlots = parseInt(row.querySelector('.role-slots').value);
+                    return { name, emoji, maxSlots };
+                }).filter(role => role.name && role.maxSlots > 0);
+                
+                alertEl.className = 'alert alert-info hidden';
+                alertEl.textContent = '';
+                
+                const data = await apiRequest('/api/events', {
+                    method: 'POST',
+                    body: JSON.stringify({
+                        title,
+                        description,
+                        dateTime,
+                        duration,
+                        maxParticipants,
+                        roles
+                    })
+                });
+                
+                alertEl.className = 'alert alert-success';
+                alertEl.textContent = '✅ Event created successfully!';
+                setTimeout(() => {
+                    alertEl.className = 'alert hidden';
+                    switchTab('events');
+                    loadEvents();
+                    loadDashboardData();
+                }, 2000);
+                
+            } catch (error) {
+                alertEl.className = 'alert alert-error';
+                alertEl.textContent = `❌ Error: ${error.message}`;
+            }
+        }
+        
+        // Create Preset
+        async function createPreset() {
+            const alertEl = document.getElementById('createPresetAlert');
+            
+            try {
+                const key = document.getElementById('presetKey').value.trim();
+                const name = document.getElementById('presetName').value.trim();
+                const description = document.getElementById('presetDescription').value.trim();
+                const duration = parseInt(document.getElementById('presetDuration').value);
+                const maxParticipants = parseInt(document.getElementById('presetMaxParticipants').value);
+                
+                if (!key || !name || !duration) {
+                    throw new Error('Key, Name, and Duration are required');
+                }
+                
+                // Validate key format
+                if (!/^[a-z0-9-]+$/.test(key)) {
+                    throw new Error('Key must be lowercase letters, numbers, and hyphens only');
+                }
+                
+                // Collect roles
+                const roleRows = document.querySelectorAll('#presetRolesContainer .role-row');
+                const roles = Array.from(roleRows).map(row => {
+                    const name = row.querySelector('.role-name').value.trim();
+                    const emoji = row.querySelector('.role-emoji').value.trim();
+                    const maxSlots = parseInt(row.querySelector('.role-slots').value);
+                    return { name, emoji, maxSlots };
+                }).filter(role => role.name && role.maxSlots > 0);
+                
+                alertEl.className = 'alert alert-info hidden';
+                alertEl.textContent = '';
+                
+                const data = await apiRequest('/api/presets', {
+                    method: 'POST',
+                    body: JSON.stringify({
+                        key,
+                        name,
+                        description,
+                        duration,
+                        maxParticipants,
+                        roles
+                    })
+                });
+                
+                alertEl.className = 'alert alert-success';
+                alertEl.textContent = '✅ Preset created successfully!';
+                setTimeout(() => {
+                    alertEl.className = 'alert hidden';
+                    switchTab('presets');
+                    loadPresets();
+                    loadPresetSelect();
+                    loadDashboardData();
+                }, 2000);
+                
+            } catch (error) {
+                alertEl.className = 'alert alert-error';
+                alertEl.textContent = `❌ Error: ${error.message}`;
+            }
+        }
+        
+        // Reset Preset Form
+        function resetPresetForm() {
+            document.getElementById('presetKey').value = '';
+            document.getElementById('presetName').value = '';
+            document.getElementById('presetDescription').value = '';
+            document.getElementById('presetDuration').value = '60';
+            document.getElementById('presetMaxParticipants').value = '0';
+            document.getElementById('presetRolesContainer').innerHTML = `
+                <div class="role-row">
+                    <input type="text" placeholder="Role name (e.g., Tank)" class="role-name" />
+                    <input type="text" placeholder="Emoji (e.g., 🛡️)" class="role-emoji" style="max-width: 80px;" />
+                    <input type="number" placeholder="Max slots" class="role-slots" min="1" value="1" style="max-width: 100px;" />
+                    <button class="btn btn-danger" style="padding: 6px; min-width: 36px;" onclick="this.parentElement.remove()">✕</button>
+                </div>
+            `;
+        }
+        
+        // Create Event from Preset
+        async function createEventFromPreset() {
+            const alertEl = document.getElementById('createFromPresetAlert');
+            
+            try {
+                const presetKey = document.getElementById('fromPresetSelect').value;
+                const dateTime = document.getElementById('fromPresetDateTime').value;
+                const description = document.getElementById('fromPresetDescription').value.trim();
+                
+                if (!presetKey || !dateTime) {
+                    throw new Error('Preset and Date/Time are required');
+                }
+                
+                alertEl.className = 'alert alert-info hidden';
+                alertEl.textContent = '';
+                
+                const data = await apiRequest('/api/events/from-preset', {
+                    method: 'POST',
+                    body: JSON.stringify({
+                        presetName: presetKey,
+                        dateTime,
+                        description: description || undefined
+                    })
+                });
+                
+                alertEl.className = 'alert alert-success';
+                alertEl.textContent = '✅ Event created successfully from preset!';
+                setTimeout(() => {
+                    alertEl.className = 'alert hidden';
+                    switchTab('events');
+                    loadEvents();
+                    loadDashboardData();
+                }, 2000);
+                
+            } catch (error) {
+                alertEl.className = 'alert alert-error';
+                alertEl.textContent = `❌ Error: ${error.message}`;
+            }
+        }
+        
+        // Delete Event
+        async function deleteEvent(eventId) {
+            if (!confirm('Are you sure you want to delete this event?')) return;
+            
+            try {
+                await apiRequest(`/api/events/${eventId}`, {
+                    method: 'DELETE'
+                });
+                loadEvents();
+                loadDashboardData();
+            } catch (error) {
+                alert(`Error deleting event: ${error.message}`);
+            }
+        }
+        
+        // Delete Preset
+        async function deletePreset(presetKey) {
+            if (!confirm('Are you sure you want to delete this preset?')) return;
+            
+            try {
+                await apiRequest(`/api/presets/${presetKey}`, {
+                    method: 'DELETE'
+                });
+                loadPresets();
+                loadPresetSelect();
+                loadDashboardData();
+            } catch (error) {
+                alert(`Error deleting preset: ${error.message}`);
+            }
+        }
+    </script>
 </body>
 </html>

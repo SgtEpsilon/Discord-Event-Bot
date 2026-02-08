@@ -156,8 +156,14 @@ class CalendarService {
           console.log(`[Sync] Found ${calendarEvents.length} events in "${cal.name}"`);
           
           for (const calEvent of calendarEvents) {
+            // Guard both start and end dateTime to prevent runtime errors
             if (!calEvent.start || !calEvent.start.dateTime) {
-              console.log(`[Sync] Skipping all-day event: ${calEvent.summary}`);
+              console.log(`[Sync] Skipping all-day event (missing start): ${calEvent.summary || 'Unknown'}`);
+              continue;
+            }
+            
+            if (!calEvent.end || !calEvent.end.dateTime) {
+              console.log(`[Sync] Skipping malformed event (missing end): ${calEvent.summary || 'Unknown'}`);
               continue;
             }
             

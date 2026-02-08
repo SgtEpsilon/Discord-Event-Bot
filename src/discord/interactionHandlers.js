@@ -58,14 +58,14 @@ Handle event creation confirmation
 async function handleCreateConfirm(interaction, eventData, context) {
 const { eventManager, timeUtils } = context;
 try {
-const event = eventManager.createEvent({
+const event = await eventManager.createEvent({  // ✅ AWAIT added
 ...eventData,
 creatorId: interaction.user.id,
 createdAt: new Date()
 });
 await interaction.reply({
-  content: `✅ Event created successfully!\n\n**${event.name}**\n${timeUtils.formatDateTime(event.date)}`,
-  ephemeral: true
+content: `✅ Event created successfully!\n\n**${event.name}**\n${timeUtils.formatDateTime(event.date)}`,
+ephemeral: true
 });
 } catch (error) {
 console.error('Error creating event:', error);
@@ -100,7 +100,7 @@ Handle canceling an event modification
 */
 async function handleCancel(interaction) {
 await interaction.update({
-content: 'Operation canceled.',
+content: 'CloseOperation canceled.',
 embeds: [],
 components: []
 });
