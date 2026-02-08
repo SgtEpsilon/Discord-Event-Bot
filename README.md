@@ -1,284 +1,266 @@
-# Discord Event Bot - Modular Architecture
+# Discord Event + Streaming Bot
 
-A fully modular Discord bot for managing events with Google Calendar integration, custom signup roles, and a web interface.
+A powerful modular Discord bot combining event management with Twitch/YouTube monitoring, Google Calendar integration, custom signup roles, and a web interface.
 
-## 🎯 Features
-
-- **Event Management**: Create, manage, and track Discord events
-- **Google Calendar Integration**: Sync events to/from Google Calendar
-- **Custom Signup Roles**: Define roles with emoji and participant limits
-- **Preset Templates**: Reusable templates for common event types
-- **Web Interface**: Manage events through a browser
-- **Auto-Sync**: Automatically import calendar events
-- **Timezone Support**: Discord timestamps adjust to user timezone
-
-## 📂 Modular Architecture
-
-```
-discord-event-bot-modular/
-├── src/
-│   ├── config/           # Configuration management
-│   │   └── index.js      # Environment & settings
-│   ├── utils/            # Utility functions
-│   │   ├── storage.js    # File operations
-│   │   └── datetime.js   # Date/time parsing
-│   ├── services/         # Business logic
-│   │   ├── calendar.js   # Google Calendar API
-│   │   ├── eventManager.js      # Event CRUD operations
-│   │   ├── presetManager.js     # Preset templates
-│   │   └── syncService.js       # Calendar sync logic
-│   ├── discord/          # Discord-specific modules
-│   │   ├── embedBuilder.js      # Discord embed creation
-│   │   ├── buttonBuilder.js     # Interactive buttons
-│   │   ├── commands.js          # Slash command definitions
-│   │   ├── commandHandlers.js   # Command logic
-│   │   └── interactionHandlers.js # Button/autocomplete
-│   └── bot.js            # Main bot coordinator
-├── public/               # Web interface files
-│   └── index.html        # Event management UI
-├── web-server.js         # Express API server
-├── start-all.js          # Launch both servers
-├── package.json          # Dependencies & scripts
-├── .env.example          # Environment template
-└── presets.json          # Event templates
-
-```
-
-## 🚀 Quick Start
+## 🚀 Quick Start (5 Minutes)
 
 ### 1. Install Dependencies
 ```bash
 npm install
 ```
 
-### 2. Configure Environment
-Create `.env` file:
+### 2. Configure
+Copy `.env.example` to `.env` and add your Discord bot token:
 ```env
-DISCORD_TOKEN=your_discord_bot_token
-GOOGLE_CREDENTIALS={"type":"service_account",...}
-CALENDAR_IDS=Work:calendar_id_1,Gaming:calendar_id_2
-WEB_PORT=3000
+DISCORD_TOKEN=your_discord_bot_token_here
 ```
 
-### 3. Run the Bot
+**Get your token:**
+1. Go to [Discord Developer Portal](https://discord.com/developers/applications)
+2. Create application → Bot tab → Add Bot
+3. Enable "Message Content Intent"
+4. Copy the token
+
+### 3. Run
 ```bash
 # Discord bot only
 npm start
 
-# Web interface only
-npm run web
-
-# Both servers
+# With web interface
 npm run start:all
 ```
 
-## 📚 Module Documentation
+### 4. Create Your First Event
+Use a preset template:
+```
+/preset overwatch 15-02-2026 20:00
+```
 
-### Configuration Module
-**File**: `src/config/index.js`
-- Parses environment variables
-- Validates required settings
-- Manages file paths
+Or create custom:
+```
+/create title:Raid Night datetime:15-02-2026 20:00 duration:120
+/addrole event_id:event_123 emoji:⚔️ role_name:DPS max_slots:6
+```
 
-### Storage Module
-**File**: `src/utils/storage.js`
-**Methods**:
-- `load()` - Load JSON from file
-- `save(data)` - Save JSON to file
-- `get(key)` - Get value by key
-- `set(key, value)` - Set key-value pair
-- `delete(key)` - Remove entry
-- `clear()` - Clear all data
+Done! Users can now click buttons to sign up.
 
-### DateTime Module
-**File**: `src/utils/datetime.js`
-**Functions**:
-- `parseDateTime(str)` - Parse DD-MM-YYYY HH:MM
-- `formatDateTime(iso)` - Format for display
-- `getUnixTimestamp(iso)` - Get Unix timestamp
-- `isPast(iso)` - Check if date is past
-- `isUpcoming(iso)` - Check if date is upcoming
+## 📋 Core Features
 
-### CalendarService
-**File**: `src/services/calendar.js`
-**Methods**:
-- `isEnabled()` - Check if configured
-- `testConnection()` - Verify API access
-- `createEvent(event)` - Create calendar event
-- `syncEvents(calId, start, end)` - Fetch events
-- `getCalendars()` - List configured calendars
+### 🎮 Event Management
+- **Create events** with custom signup roles and limits
+- **18+ game presets** (Overwatch, Valorant, WoW, D&D, etc.)
+- **Google Calendar sync** (optional) - two-way integration
+- **Auto-sync** - import calendar events hourly
+- **Web dashboard** - manage events visually
+- **Timezone support** - everyone sees their local time
 
-### EventManager
-**File**: `src/services/eventManager.js`
-**Methods**:
-- `createEvent(data)` - Create new event
-- `createFromPreset(preset, dateTime, desc)` - Use template
-- `getEvent(id)` - Retrieve event
-- `getAllEvents()` - Get all events
-- `getGuildEvents(guildId)` - Filter by guild
-- `getUpcomingEvents()` - Future events only
-- `updateEvent(id, updates)` - Modify event
-- `deleteEvent(id)` - Remove event
-- `addRole(eventId, role)` - Add signup role
-- `signupUser(eventId, roleName, userId)` - Register user
-- `removeUser(eventId, userId)` - Remove user
-- `importCalendarEvent(data)` - Import from calendar
-- `getStats()` - Get statistics
+### 📺 Stream Monitoring
+- **Twitch** - live stream notifications with thumbnails
+- **YouTube** - new video alerts (RSS-based, no API quota!)
+- **Smart updates** - edits messages on game changes (no spam)
+- **Custom notifications** - personalize per streamer/channel
+- **"Watch Now" buttons** on all notifications
 
-### PresetManager
-**File**: `src/services/presetManager.js`
-**Methods**:
-- `loadPresets()` - Load all presets
-- `getPreset(key)` - Get specific preset
-- `createPreset(key, data)` - Create new preset
-- `updatePreset(key, data)` - Modify preset
-- `deletePreset(key)` - Remove preset
-- `searchPresets(query)` - Find presets
-- `getPresetCount()` - Count presets
+### 🌐 Web Interface
+- Visual event dashboard at `http://localhost:3000`
+- Create/delete events via browser
+- Browse and use presets
+- View statistics
 
-### EmbedBuilder
-**File**: `src/discord/embedBuilder.js`
-**Static Methods**:
-- `createEventEmbed(event)` - Event display
-- `createHelpEmbed(presetCount, calCount)` - Help message
-- `createEventListEmbed(events)` - List all events
-- `createCalendarListEmbed(calendars)` - Calendar list
-- `createEventInfoEmbed(event)` - Detailed info
-
-### ButtonBuilder
-**File**: `src/discord/buttonBuilder.js`
-**Static Methods**:
-- `createSignupButtons(event)` - Generate signup UI
-- `parseButtonId(customId)` - Extract button data
-
-## 🎮 Discord Commands
-
-| Command | Description |
-|---------|-------------|
-| `/create` | Create new event |
-| `/preset` | Use event template |
-| `/presets` | List all templates |
-| `/addrole` | Add signup role |
-| `/list` | Show all events |
-| `/eventinfo` | Detailed event info |
-| `/delete` | Remove event |
-| `/deletepreset` | Remove template |
-| `/sync` | Import calendar events |
-| `/calendars` | List calendars |
-| `/autosync` | Manage auto-sync |
-| `/help` | Show help |
-
-## 🌐 Web API Endpoints
+## 📖 Essential Commands
 
 ### Events
-- `GET /api/events` - List all events
-- `GET /api/events/:id` - Get event details
-- `POST /api/events` - Create event
-- `PUT /api/events/:id` - Update event
-- `DELETE /api/events/:id` - Delete event
-- `POST /api/events/from-preset` - Create from preset
+| Command | Description |
+|---------|-------------|
+| `/create` | Create custom event |
+| `/preset` | Create from template (fastest!) |
+| `/addrole` | Add signup role to event |
+| `/list` | Show all upcoming events |
+| `/delete` | Remove event |
+| `/eventinfo` | Detailed event info with timezone |
+| `/sync` | Import from Google Calendar |
 
-### Presets
-- `GET /api/presets` - List presets
-- `POST /api/presets` - Create preset
-- `PUT /api/presets/:key` - Update preset
-- `DELETE /api/presets/:key` - Delete preset
+### Streaming
+| Command | Description |
+|---------|-------------|
+| `/setup-streaming` | Set notification channel |
+| `/add-streamer` | Monitor Twitch streamer |
+| `/add-youtube` | Monitor YouTube channel |
+| `/list-streamers` | Show monitored streamers |
 
-### Stats
-- `GET /api/stats` - Bot statistics
-- `GET /api/health` - Health check
+## 🔧 Configuration
 
-## 🔧 Development
-
-### Run in Development Mode
-```bash
-# With auto-reload
-npm run dev:all
+### Required
+```env
+DISCORD_TOKEN=your_bot_token
 ```
 
-### Module Testing
-```javascript
-// Test EventManager independently
-const EventManager = require('./src/services/eventManager');
-const manager = new EventManager('./events.json');
+### Optional
+```env
+# Google Calendar (two-way sync)
+GOOGLE_CREDENTIALS={"type":"service_account",...}
+CALENDAR_IDS=primary
 
-const event = await manager.createEvent({
-    title: 'Test Event',
-    dateTime: new Date().toISOString(),
-    duration: 60
-});
+# Twitch (stream monitoring)
+TWITCH_CLIENT_ID=your_client_id
+TWITCH_CLIENT_SECRET=your_client_secret
 
-console.log(event);
+# Web interface
+WEB_PORT=3000
 ```
 
-## 📝 Creating Custom Modules
+## 📚 Documentation Files
 
-1. Create file in appropriate directory
-2. Export class or functions
-3. Import in `src/bot.js`
-4. Add to context object
+- **SETUP.md** - Complete installation and configuration guide
+- **COMMANDS.md** - Detailed command reference with examples
+- **FEATURES.md** - In-depth feature guides (calendar sync, streaming, presets)
+- **TROUBLESHOOTING.md** - Common issues and solutions
 
-Example:
-```javascript
-// src/services/myService.js
-class MyService {
-    constructor() {
-        // Initialize
-    }
-    
-    myMethod() {
-        // Implementation
-    }
-}
+## 💡 Common Use Cases
 
-module.exports = MyService;
+### Weekly Gaming Sessions
+```
+/preset valorant 15-02-2026 20:00
+```
+Instant 5v5 event with proper roles (Duelist, Controller, etc.)
+
+### D&D Campaign Night
+```
+/preset dnd 18-02-2026 18:00 Chapter 5: The Lost City
+```
+Creates 4-hour session with DM + 5 player slots
+
+### Stream Notifications
+```
+/setup-streaming channel:#stream-announcements
+/add-streamer
+[Enter: shroud]
+```
+Auto-posts when shroud goes live with rich embed + watch button
+
+### Calendar Integration
+```
+/autosync on
+```
+Events created in Google Calendar → automatically appear in Discord
+
+## 🎯 Date Format
+
+**Use:** `DD-MM-YYYY HH:MM`
+
+Examples:
+- ✅ `15-02-2026 20:00` (8:00 PM)
+- ✅ `15-02-2026 08:00 PM` (also works)
+- ❌ `2026-02-15 20:00` (wrong order)
+- ❌ `02-15-2026 20:00` (American format not supported)
+
+## 🏗️ Project Structure
+
+```
+discord-event-bot/
+├── src/
+│   ├── bot.js                  # Main entry point
+│   ├── config/                 # Configuration
+│   ├── services/               # Business logic
+│   │   ├── eventManager.js     # Event CRUD
+│   │   ├── calendar.js         # Google Calendar
+│   │   ├── twitchMonitor.js    # Twitch monitoring
+│   │   └── youtubeMonitor.js   # YouTube monitoring
+│   ├── discord/
+│   │   ├── commands/           # Event commands
+│   │   └── streamingCommands/  # Stream commands
+│   └── utils/                  # Helpers
+├── data/
+│   ├── events.json            # Event storage
+│   ├── presets.json           # Game templates
+│   └── streaming.json         # Stream config
+├── public/
+│   └── index.html             # Web interface
+└── web-server.js              # Web API
 ```
 
-## 🎨 Preset Format
+## 🛠️ Bot Permissions
 
-```json
-{
-  "preset-key": {
-    "name": "Event Name",
-    "description": "Description",
-    "duration": 60,
-    "maxParticipants": 10,
-    "roles": [
-      {
-        "name": "Role Name",
-        "emoji": "⚔️",
-        "maxSlots": 5
-      }
-    ]
-  }
-}
-```
+Your bot needs:
+- ✅ Send Messages
+- ✅ View Channels
+- ✅ Use Slash Commands
+- ✅ Embed Links
+- ✅ Read Message History
+- ✅ Message Content Intent (in Developer Portal)
 
-## 📦 Dependencies
+## 🎨 Available Presets
 
-- **discord.js** - Discord API wrapper
-- **googleapis** - Google Calendar API
-- **express** - Web server
-- **cors** - Cross-origin requests
-- **dotenv** - Environment variables
+**FPS Games:** overwatch, valorant, csgo, apex, cod-warzone, tarkov
 
-## 🤝 Contributing
+**Co-op:** helldivers, division, phasmophobia
 
-1. Add new modules in appropriate `src/` subdirectory
-2. Follow existing patterns
-3. Update documentation
-4. Export public API
+**MMO Raids:** wow-raid, ffxiv-raid, destiny-raid
 
-## 📄 License
+**MOBA:** league
+
+**Survival:** minecraft, rust, sea-of-thieves
+
+**Social:** among-us
+
+**Tabletop:** dnd
+
+See full list with `/presets` command.
+
+## 🚨 Troubleshooting Quick Fixes
+
+**Commands not working?**
+- Enable "Message Content Intent" in Developer Portal
+- Wait 5 minutes for Discord to register commands
+
+**Twitch not working?**
+- Add `TWITCH_CLIENT_ID` and `TWITCH_CLIENT_SECRET` to `.env`
+
+**YouTube not detecting videos?**
+- First run only initializes - wait 5 minutes for next check
+- Checks every 5 minutes for new uploads
+
+**"Event not found" on button click?**
+- Bot restarted - delete old messages and create new events
+
+See TROUBLESHOOTING.md for detailed solutions.
+
+## 📊 Performance
+
+- **Twitch checks:** Every 60 seconds
+- **YouTube checks:** Every 5 minutes  
+- **Calendar sync:** Every hour (when auto-sync enabled)
+- **Memory:** ~50-70MB
+- **Disk:** Events stored as JSON
+
+## 🔐 Security Notes
+
+**Web Interface:**
+- Default setup has NO authentication
+- Safe for: local development, home network
+- NOT safe for: public internet
+- Access at `http://localhost:3000`
+
+**API Keys:**
+- Keep `.env` file private
+- Never commit to git (already in `.gitignore`)
+- Reset tokens if accidentally exposed
+
+## 📝 License
 
 MIT License - See LICENSE file for details
 
-## 🆘 Support
+## 🆘 Need Help?
 
-- Check `/help` command in Discord
-- Review module documentation above
-- Examine example code in each module
+1. Check TROUBLESHOOTING.md for common issues
+2. Review SETUP.md for detailed configuration
+3. Verify all dependencies are installed
+4. Check console logs for error messages
 
-## 🔄 Migration from Monolithic
+---
 
-See `MODULAR_CONVERSION_SUMMARY.md` for detailed migration guide.
+**Quick Links:**
+- [Full Setup Guide](SETUP.md)
+- [Command Reference](COMMANDS.md)
+- [Feature Documentation](FEATURES.md)
+- [Troubleshooting](TROUBLESHOOTING.md)

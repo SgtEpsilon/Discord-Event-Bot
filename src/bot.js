@@ -33,7 +33,9 @@ const eventManager = new EventManager(config.files.events, calendarService);
 const presetManager = new PresetManager(config.files.presets);
 
 // Initialize streaming services
-const streamingConfig = new StreamingConfigManager(config.files.streaming);
+const streamingConfig = new StreamingConfigManager(
+    config.files.streaming || path.join(__dirname, '../data/streaming-config.json')
+);
 let twitchMonitor = null;
 let youtubeMonitor = null;
 
@@ -188,7 +190,7 @@ client.once('ready', async () => {
     console.log(`║  🔗 Google Calendar: ${calendarService.isEnabled() ? 'Connected' : 'Not configured'}`);
     console.log(`║  📋 Presets: ${presetManager.getPresetCount()} loaded`);
     console.log('╠═══════════════════════════════════════════════════════╣');
-    console.log(`║  🎮 Twitch Monitor: ${config.twitch.enabled ? 'Enabled' : 'Disabled (no credentials)'}`);
+    console.log(`║  🎮 Twitch Monitor: ${config.twitch?.enabled ? 'Enabled' : 'Disabled (no credentials)'}`);
     console.log(`║  📺 YouTube Monitor: Enabled (RSS-based)`);
     console.log('╚═══════════════════════════════════════════════════════╝\n');
     
@@ -203,7 +205,7 @@ client.once('ready', async () => {
     }
     
     // Initialize and start streaming monitors
-    if (config.twitch.enabled) {
+    if (config.twitch?.enabled) {
         twitchMonitor = new TwitchMonitor(client, config, streamingConfig);
         twitchMonitor.start();
     }
