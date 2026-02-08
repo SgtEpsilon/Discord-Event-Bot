@@ -1,14 +1,15 @@
 {
-  "name": "discord-event-bot",
-  "version": "2.0.0",
-  "description": "Discord bot for managing events with Google Calendar integration, custom signup roles, and web interface",
-  "main": "bot.js",
+  "name": "discord-event-bot-modular",
+  "version": "4.0.0",
+  "description": "Modular Discord bot for managing events with Google Calendar integration, Twitch/YouTube monitoring, custom signup roles, and web interface",
+  "main": "src/bot.js",
   "scripts": {
-    "start": "node bot.js",
-    "dev": "nodemon bot.js",
+    "start": "node src/bot.js",
     "web": "node web-server.js",
     "start:all": "node start-all.js",
-    "dev:all": "concurrently \"nodemon bot.js\" \"nodemon web-server.js\""
+    "dev": "nodemon src/bot.js",
+    "dev:web": "nodemon web-server.js",
+    "dev:all": "concurrently \"nodemon src/bot.js\" \"nodemon web-server.js\""
   },
   "keywords": [
     "discord",
@@ -16,7 +17,12 @@
     "events",
     "calendar",
     "google-calendar",
-    "web-interface"
+    "twitch",
+    "youtube",
+    "streaming",
+    "notifications",
+    "web-interface",
+    "modular"
   ],
   "author": "",
   "license": "MIT",
@@ -25,7 +31,9 @@
     "googleapis": "^130.0.0",
     "dotenv": "^16.3.1",
     "express": "^4.18.2",
-    "cors": "^2.8.5"
+    "cors": "^2.8.5",
+    "axios": "^1.6.2",
+    "xml2js": "^0.6.2"
   },
   "devDependencies": {
     "nodemon": "^3.0.2",
