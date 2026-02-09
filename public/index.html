@@ -4,415 +4,310 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Discord Event Bot Manager</title>
-    <link rel="stylesheet" href="/style.css">
-    <script src="/script.js" defer></script>
+    <link rel="stylesheet" href="style.css">
 </head>
 <body>
-    <div class="discord-container">
-        <!-- Server List (LEFT SIDEBAR) -->
+    <div class="app-container">
+        <!-- Server Icons -->
         <div class="server-list">
             <div class="server-icon active" onclick="switchToMainView()">🎮</div>
             <div class="server-icon" onclick="switchToSettingsView()">⚙️</div>
         </div>
-        
-        <!-- Channel List (MIDDLE SIDEBAR) -->
-        <div class="channel-list" id="channelList">
-            <div class="server-header">
-                <div class="server-icon-small">🎮</div>
-                <div class="server-name">Event Bot Manager</div>
+
+        <!-- Channel List / Navigation -->
+        <div id="channelList" class="channel-list">
+            <div class="channel-category" id="eventsCategory">
+                <div class="channel-category-title">📅 EVENTS</div>
+                <div class="channel-item active" onclick="switchTab('events')">📅 All Events</div>
+                <div class="channel-item" onclick="switchTab('create-event')">➕ Create Event</div>
             </div>
-            
-            <div id="eventsCategory" class="channel-category-group">
-                <div class="channel-category">EVENTS</div>
-                <div class="channel-item active" onclick="switchTab('events')">
-                    <span class="channel-icon">📅</span>
-                    <span class="channel-name">All Events</span>
-                </div>
-                <div class="channel-item" onclick="switchTab('create-event')">
-                    <span class="channel-icon">➕</span>
-                    <span class="channel-name">Create Event</span>
-                </div>
+            <div class="channel-category" id="presetsCategory">
+                <div class="channel-category-title">📋 PRESETS</div>
+                <div class="channel-item" onclick="switchTab('presets')">📋 Presets</div>
+                <div class="channel-item" onclick="switchTab('create-preset')">🎨 Create Preset</div>
+                <div class="channel-item" onclick="switchTab('create-from-preset')">✨ From Preset</div>
             </div>
-            
-            <div id="presetsCategory" class="channel-category-group">
-                <div class="channel-category">PRESETS</div>
-                <div class="channel-item" onclick="switchTab('presets')">
-                    <span class="channel-icon">📋</span>
-                    <span class="channel-name">Presets</span>
-                </div>
-                <div class="channel-item" onclick="switchTab('create-preset')">
-                    <span class="channel-icon">🎨</span>
-                    <span class="channel-name">Create Preset</span>
-                </div>
-                <div class="channel-item" onclick="switchTab('create-from-preset')">
-                    <span class="channel-icon">✨</span>
-                    <span class="channel-name">From Preset</span>
-                </div>
-            </div>
-            
-            <div id="configCategory" class="channel-category-group hidden">
-                <div class="channel-category">CONFIGURATION</div>
-                <div class="channel-item" onclick="switchTab('server-settings')">
-                    <span class="channel-icon">⚙️</span>
-                    <span class="channel-name">Server Settings</span>
-                </div>
-                <div class="channel-item" onclick="switchTab('twitch')">
-                    <span class="channel-icon">🎮</span>
-                    <span class="channel-name">Twitch</span>
-                </div>
-                <div class="channel-item" onclick="switchTab('youtube')">
-                    <span class="channel-icon">📺</span>
-                    <span class="channel-name">YouTube</span>
-                </div>
+            <div class="channel-category hidden" id="configCategory">
+                <div class="channel-category-title">⚙️ CONFIGURATION</div>
+                <div class="channel-item" onclick="switchTab('server-settings')">⚙️ Server Settings</div>
+                <div class="channel-item" onclick="switchTab('twitch')">🎮 Twitch</div>
+                <div class="channel-item" onclick="switchTab('youtube')">📺 YouTube</div>
             </div>
         </div>
-        
-        <!-- Main Content (RIGHT SIDE) -->
-        <div class="main-content">
-            <div class="top-bar">
+
+        <!-- Main Content Area -->
+        <div class="content-area">
+            <header class="app-header">
                 <h1>Discord Event Bot Manager</h1>
-                <div class="api-auth">
-                    <div id="authStatus" class="status unauthenticated">
-                        🔒 Not authenticated
-                    </div>
+                <div class="auth-section">
+                    <span id="authStatus" class="status unauthenticated">🔒 Not authenticated</span>
+                </div>
+            </header>
+
+            <!-- API Authentication -->
+            <div class="card auth-card">
+                <h2>🔐 API Authentication</h2>
+                <p>Enter your API key to access protected endpoints:</p>
+                <div class="input-group">
+                    <input type="password" id="apiKeyInput" placeholder="API Key" class="input-field">
+                    <button class="btn btn-primary" onclick="saveApiKey()">Save Key</button>
+                </div>
+                <div id="apiKeyAlert" class="alert hidden"></div>
+            </div>
+
+            <!-- Dashboard Stats -->
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <div class="stat-label">Total Events</div>
+                    <div class="stat-value" id="totalEvents">0</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Upcoming</div>
+                    <div class="stat-value" id="upcomingEvents">0</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Total Signups</div>
+                    <div class="stat-value" id="totalSignups">0</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Presets</div>
+                    <div class="stat-value" id="totalPresets">0</div>
                 </div>
             </div>
-            
-            <div class="content-area">
-                <!-- API Key Section -->
-                <div class="api-key-section">
-                    <h3>🔐 API Authentication</h3>
-                    <p>Enter your API key to access protected endpoints:</p>
-                    <div class="api-key-input">
-                        <input type="password" id="apiKeyInput" placeholder="Enter your API key (WEB_API_KEY)" />
-                        <button onclick="saveApiKey()">Save Key</button>
-                    </div>
-                </div>
-                
-                <!-- Stats Grid -->
-                <div class="stats-grid">
-                    <div class="stat-card">
-                        <div class="stat-label">Total Events</div>
-                        <div class="stat-value" id="totalEvents">0</div>
-                    </div>
-                    <div class="stat-card">
-                        <div class="stat-label">Upcoming</div>
-                        <div class="stat-value" id="upcomingEvents">0</div>
-                    </div>
-                    <div class="stat-card">
-                        <div class="stat-label">Total Signups</div>
-                        <div class="stat-value" id="totalSignups">0</div>
-                    </div>
-                    <div class="stat-card">
-                        <div class="stat-label">Presets</div>
-                        <div class="stat-value" id="totalPresets">0</div>
-                    </div>
-                </div>
-                
-                <!-- EVENTS TAB -->
-                <div id="events" class="tab-content active">
-                    <div class="section-title">
-                        <h2>📅 All Events</h2>
-                        <button class="btn btn-secondary" onclick="loadEvents()">
-                            <span>🔄</span> Refresh
-                        </button>
-                    </div>
-                    <div id="eventsContainer" class="events-grid">
-                        <div class="loading">Loading events...</div>
-                    </div>
-                </div>
-                
-                <!-- PRESETS TAB -->
-                <div id="presets" class="tab-content">
-                    <div class="section-title">
-                        <h2>📋 Event Presets</h2>
-                        <button class="btn btn-secondary" onclick="loadPresets()">
-                            <span>🔄</span> Refresh
-                        </button>
-                    </div>
-                    <div id="presetsContainer" class="presets-grid">
-                        <div class="loading">Loading presets...</div>
-                    </div>
-                </div>
-                
-                <!-- CREATE EVENT TAB -->
-                <div id="create-event" class="tab-content">
-                    <h2>➕ Create New Event</h2>
-                    <div id="createEventAlert" class="alert hidden"></div>
-                    
+
+            <!-- Events Tab -->
+            <div id="events" class="tab-content active">
+                <h2>📅 All Events</h2>
+                <button class="btn btn-secondary" onclick="loadEvents()">🔄 Refresh</button>
+                <div id="eventsContainer" class="events-grid">Loading events...</div>
+            </div>
+
+            <!-- Create Event Tab -->
+            <div id="create-event" class="tab-content">
+                <h2>➕ Create New Event</h2>
+                <div id="createEventAlert" class="alert hidden"></div>
+                <form class="form-container" onsubmit="event.preventDefault(); createEvent()">
                     <div class="form-group">
-                        <label for="eventTitle">Event Title *</label>
-                        <input type="text" id="eventTitle" placeholder="Enter event title" required />
+                        <label>Event Title *</label>
+                        <input type="text" id="eventTitle" class="input-field" required>
                     </div>
-                    
                     <div class="form-group">
-                        <label for="eventDescription">Description</label>
-                        <textarea id="eventDescription" placeholder="Enter event description"></textarea>
+                        <label>Description</label>
+                        <textarea id="eventDescription" class="input-field" rows="3"></textarea>
                     </div>
-                    
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>Date & Time *</label>
+                            <input type="datetime-local" id="eventDateTime" class="input-field" required>
+                        </div>
+                        <div class="form-group">
+                            <label>Duration (minutes)</label>
+                            <input type="number" id="eventDuration" class="input-field" value="60" min="1">
+                        </div>
+                    </div>
                     <div class="form-group">
-                        <label for="eventDateTime">Date & Time *</label>
-                        <input type="datetime-local" id="eventDateTime" required />
+                        <label>Max Participants (0 = unlimited)</label>
+                        <input type="number" id="eventMaxParticipants" class="input-field" value="0" min="0">
                     </div>
-                    
-                    <div class="form-group">
-                        <label for="eventDuration">Duration (minutes)</label>
-                        <input type="number" id="eventDuration" value="60" min="1" />
-                    </div>
-                    
-                    <div class="form-group">
-                        <label for="eventMaxParticipants">Max Participants (0 = unlimited)</label>
-                        <input type="number" id="eventMaxParticipants" value="0" min="0" />
-                    </div>
-                    
                     <div class="form-group">
                         <label>Roles</label>
-                        <div class="roles-container" id="eventRolesContainer">
+                        <div id="eventRolesContainer" class="roles-container">
                             <div class="role-row">
-                                <input type="text" placeholder="Emoji" class="role-emoji" />
-                                <input type="text" placeholder="Role name" class="role-name" />
-                                <input type="number" placeholder="Max slots" class="role-slots" min="0" />
+                                <input type="text" placeholder="Emoji" class="role-emoji input-field">
+                                <input type="text" placeholder="Role name" class="role-name input-field">
+                                <input type="number" placeholder="Max slots" class="role-slots input-field" min="0">
                                 <button type="button" class="btn btn-danger" onclick="removeEventRoleRow(this)">✕</button>
                             </div>
                         </div>
-                        <button class="btn btn-secondary" onclick="addEventRoleRow()" style="margin-top: 10px;">
-                            <span>+</span> Add Role
-                        </button>
+                        <button type="button" class="btn btn-secondary" onclick="addEventRoleRow()">+ Add Role</button>
                     </div>
-                    
-                    <div class="action-buttons">
-                        <button class="btn btn-secondary" onclick="resetEventForm()">Reset</button>
-                        <button class="btn btn-success" onclick="createEvent()">Create Event</button>
+                    <div class="form-actions">
+                        <button type="button" class="btn btn-secondary" onclick="resetEventForm()">Reset</button>
+                        <button type="submit" class="btn btn-primary">Create Event</button>
                     </div>
-                </div>
-                
-                <!-- CREATE PRESET TAB -->
-                <div id="create-preset" class="tab-content">
-                    <h2>🎨 Create New Preset</h2>
-                    <div id="createPresetAlert" class="alert hidden"></div>
-                    
+                </form>
+            </div>
+
+            <!-- Presets Tab -->
+            <div id="presets" class="tab-content">
+                <h2>📋 Event Presets</h2>
+                <button class="btn btn-secondary" onclick="loadPresets()">🔄 Refresh</button>
+                <div id="presetsContainer" class="presets-grid">Loading presets...</div>
+            </div>
+
+            <!-- Create Preset Tab -->
+            <div id="create-preset" class="tab-content">
+                <h2>🎨 Create New Preset</h2>
+                <div id="createPresetAlert" class="alert hidden"></div>
+                <form class="form-container" onsubmit="event.preventDefault(); createPreset()">
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>Preset ID *</label>
+                            <input type="text" id="presetId" class="input-field" placeholder="e.g., raid-friday" required>
+                            <small class="form-hint">Lowercase letters, numbers, and hyphens only</small>
+                        </div>
+                        <div class="form-group">
+                            <label>Preset Name *</label>
+                            <input type="text" id="presetName" class="input-field" required>
+                        </div>
+                    </div>
                     <div class="form-group">
-                        <label for="presetId">Preset ID *</label>
-                        <input type="text" id="presetId" placeholder="unique-preset-id" required />
-                        <small>Unique identifier for this preset (e.g., raid-dungeon, pvp-arena)</small>
+                        <label>Description</label>
+                        <textarea id="presetDescription" class="input-field" rows="2"></textarea>
                     </div>
-                    
-                    <div class="form-group">
-                        <label for="presetName">Preset Name *</label>
-                        <input type="text" id="presetName" placeholder="Enter preset name" required />
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>Default Duration (minutes)</label>
+                            <input type="number" id="presetDuration" class="input-field" value="60" min="1">
+                        </div>
+                        <div class="form-group">
+                            <label>Default Max Participants (0 = unlimited)</label>
+                            <input type="number" id="presetMaxParticipants" class="input-field" value="0" min="0">
+                        </div>
                     </div>
-                    
-                    <div class="form-group">
-                        <label for="presetDescription">Description</label>
-                        <textarea id="presetDescription" placeholder="Enter preset description"></textarea>
-                    </div>
-                    
-                    <div class="form-group">
-                        <label for="presetDuration">Default Duration (minutes)</label>
-                        <input type="number" id="presetDuration" value="60" min="1" />
-                    </div>
-                    
-                    <div class="form-group">
-                        <label for="presetMaxParticipants">Default Max Participants (0 = unlimited)</label>
-                        <input type="number" id="presetMaxParticipants" value="0" min="0" />
-                    </div>
-                    
                     <div class="form-group">
                         <label>Roles</label>
-                        <div class="roles-container" id="presetRolesContainer">
+                        <div id="presetRolesContainer" class="roles-container">
                             <div class="role-row">
-                                <input type="text" placeholder="Emoji" class="role-emoji" />
-                                <input type="text" placeholder="Role name" class="role-name" />
-                                <input type="number" placeholder="Max slots" class="role-slots" min="0" />
+                                <input type="text" placeholder="Emoji" class="role-emoji input-field">
+                                <input type="text" placeholder="Role name" class="role-name input-field">
+                                <input type="number" placeholder="Max slots" class="role-slots input-field" min="0">
                                 <button type="button" class="btn btn-danger" onclick="removePresetRoleRow(this)">✕</button>
                             </div>
                         </div>
-                        <button class="btn btn-secondary" onclick="addPresetRoleRow()" style="margin-top: 10px;">
-                            <span>+</span> Add Role
-                        </button>
+                        <button type="button" class="btn btn-secondary" onclick="addPresetRoleRow()">+ Add Role</button>
                     </div>
-                    
-                    <div class="action-buttons">
-                        <button class="btn btn-secondary" onclick="resetPresetForm()">Reset</button>
-                        <button class="btn btn-success" onclick="createPreset()">Create Preset</button>
+                    <div class="form-actions">
+                        <button type="button" class="btn btn-secondary" onclick="resetPresetForm()">Reset</button>
+                        <button type="submit" class="btn btn-primary">Create Preset</button>
                     </div>
-                </div>
-                
-                <!-- CREATE FROM PRESET TAB -->
-                <div id="create-from-preset" class="tab-content">
-                    <h2>✨ Create Event from Preset</h2>
-                    <div id="createFromPresetAlert" class="alert hidden"></div>
-                    
+                </form>
+            </div>
+
+            <!-- Create from Preset Tab -->
+            <div id="create-from-preset" class="tab-content">
+                <h2>✨ Create Event from Preset</h2>
+                <div id="createFromPresetAlert" class="alert hidden"></div>
+                <form class="form-container" onsubmit="event.preventDefault(); createEventFromPreset()">
                     <div class="form-group">
-                        <label for="fromPresetSelect">Select Preset *</label>
-                        <select id="fromPresetSelect" required>
+                        <label>Select Preset *</label>
+                        <select id="fromPresetSelect" class="input-field" required>
                             <option value="">-- Choose a preset --</option>
                         </select>
                     </div>
-                    
                     <div class="form-group">
-                        <label for="fromPresetDateTime">Date & Time *</label>
-                        <input type="datetime-local" id="fromPresetDateTime" required />
+                        <label>Date & Time *</label>
+                        <input type="datetime-local" id="fromPresetDateTime" class="input-field" required>
                     </div>
-                    
                     <div class="form-group">
-                        <label for="fromPresetDescription">Custom Description (optional)</label>
-                        <textarea id="fromPresetDescription" placeholder="Override preset description"></textarea>
+                        <label>Custom Description (optional)</label>
+                        <textarea id="fromPresetDescription" class="input-field" rows="2"></textarea>
                     </div>
-                    
-                    <div class="action-buttons">
-                        <button class="btn btn-success" onclick="createEventFromPreset()">Create Event</button>
+                    <div class="form-actions">
+                        <button type="submit" class="btn btn-primary">Create Event</button>
                     </div>
+                </form>
+            </div>
+
+            <!-- Server Settings Tab -->
+            <div id="server-settings" class="tab-content">
+                <h2>⚙️ Server Settings</h2>
+                <div class="form-group">
+                    <label>Select Server (Guild)</label>
+                    <select id="settingsGuildId" class="input-field" onchange="loadGuildSettings(this.value)">
+                        <option value="">-- Loading servers...</option>
+                    </select>
                 </div>
-                
-                <!-- SERVER SETTINGS TAB -->
-                <div id="server-settings" class="tab-content">
-                    <h2>⚙️ Server Settings</h2>
-                    
-                    <div class="guild-selector">
-                        <div class="form-group">
-                            <label for="settingsGuildId">Select Server (Guild)</label>
-                            <select id="settingsGuildId" onchange="loadGuildSettings(this.value)">
-                                <option value="">-- Loading servers...</option>
-                            </select>
-                            <small>Configure settings for a specific Discord server</small>
-                        </div>
-                    </div>
-                    
-                    <div id="settingsContent" class="hidden">
-                        <!-- Event Channel Configuration -->
-                        <div class="config-card">
-                            <div class="config-header">
-                                <div class="config-title">📢 Event Channel</div>
-                            </div>
-                            <div class="config-meta">
-                                <p>Channel where events will be posted and managed</p>
-                            </div>
-                            <div class="form-group">
-                                <label for="eventChannelInput">Channel ID</label>
-                                <input type="text" id="eventChannelInput" placeholder="Channel ID (right-click channel > Copy ID)" />
-                            </div>
-                            <div class="action-buttons">
-                                <button class="btn btn-danger" onclick="clearEventChannel()">Clear Channel</button>
-                                <button class="btn btn-success" onclick="saveEventChannel()">Save Channel</button>
-                            </div>
-                            <div id="eventChannelStatus" class="alert hidden"></div>
-                        </div>
-                        
-                        <!-- Notification Channel -->
-                        <div class="config-card">
-                            <div class="config-header">
-                                <div class="config-title">🔔 Notification Channel</div>
-                            </div>
-                            <div class="config-meta">
-                                <p>Channel where streaming notifications will be posted</p>
-                            </div>
-                            <div class="form-group">
-                                <label for="notificationChannelInput">Channel ID</label>
-                                <input type="text" id="notificationChannelInput" placeholder="Channel ID for notifications" />
-                            </div>
-                            <div class="action-buttons">
-                                <button class="btn btn-success" onclick="saveNotificationChannel()">Save Channel</button>
-                            </div>
-                            <div id="notificationStatus" class="alert hidden"></div>
-                        </div>
-                    </div>
-                    
-                    <div id="noGuildSelected" class="alert alert-info">
-                        <strong>ℹ️ Select a server first</strong><br>
-                        Choose a Discord server from the dropdown above to configure its settings.
-                    </div>
+                <div id="noGuildSelected" class="info-box">
+                    <p>ℹ️ Select a server first</p>
+                    <p>Choose a Discord server from the dropdown above to configure its settings.</p>
                 </div>
-                
-                <!-- TWITCH TAB -->
-                <div id="twitch" class="tab-content">
-                    <h2>🎮 Twitch Configuration</h2>
-                    
-                    <div class="guild-selector">
-                        <div class="form-group">
-                            <label for="twitchGuildId">Select Server (Guild)</label>
-                            <select id="twitchGuildId" onchange="loadTwitchGuildSettings(this.value)">
-                                <option value="">-- Loading servers...</option>
-                            </select>
-                            <small>Configure Twitch streamers for a specific Discord server</small>
-                        </div>
+                <div id="settingsContent" class="hidden">
+                    <h3>📢 Event Channel</h3>
+                    <p>Channel where events will be posted and managed</p>
+                    <div class="form-group">
+                        <input type="text" id="eventChannelInput" class="input-field" placeholder="Channel ID">
                     </div>
-                    
-                    <div id="twitchSettingsContent" class="hidden">
-                        <div class="config-card twitch">
-                            <div class="config-header">
-                                <div class="config-title">🎮 Twitch Streamers</div>
-                                <button class="btn btn-secondary" style="padding: 6px 12px; font-size: 13px;" onclick="addTwitchRow()">
-                                    <span>+</span> Add Streamer
-                                </button>
-                            </div>
-                            <div class="config-meta">
-                                <p>Monitor Twitch streamers for live notifications</p>
-                            </div>
-                            <div id="twitchContainer">
-                                <div class="streamer-row">
-                                    <input type="text" placeholder="Twitch username (e.g., ninja)" class="twitch-username" />
-                                    <button class="btn btn-danger" style="padding: 6px; min-width: 36px;" onclick="this.parentElement.remove()">✕</button>
-                                </div>
-                            </div>
-                            <div class="action-buttons">
-                                <button class="btn btn-success" onclick="saveTwitchConfig()">Save Streamers</button>
-                            </div>
-                            <div id="twitchStatus" class="alert hidden"></div>
-                        </div>
+                    <div class="form-actions">
+                        <button type="button" class="btn btn-danger" onclick="clearEventChannel()">Clear Channel</button>
+                        <button type="button" class="btn btn-primary" onclick="saveEventChannel()">Save Channel</button>
                     </div>
-                    
-                    <div id="noTwitchGuildSelected" class="alert alert-info">
-                        <strong>ℹ️ Select a server first</strong><br>
-                        Choose a Discord server from the dropdown above to configure Twitch streamers.
+                    <div id="eventChannelStatus" class="alert hidden"></div>
+
+                    <h3>🔔 Notification Channel</h3>
+                    <p>Channel where streaming notifications will be posted</p>
+                    <div class="form-group">
+                        <input type="text" id="notificationChannelInput" class="input-field" placeholder="Channel ID">
                     </div>
+                    <div class="form-actions">
+                        <button type="button" class="btn btn-primary" onclick="saveNotificationChannel()">Save Channel</button>
+                    </div>
+                    <div id="notificationStatus" class="alert hidden"></div>
                 </div>
-                
-                <!-- YOUTUBE TAB -->
-                <div id="youtube" class="tab-content">
-                    <h2>📺 YouTube Configuration</h2>
-                    
-                    <div class="guild-selector">
-                        <div class="form-group">
-                            <label for="youtubeGuildId">Select Server (Guild)</label>
-                            <select id="youtubeGuildId" onchange="loadYouTubeGuildSettings(this.value)">
-                                <option value="">-- Loading servers...</option>
-                            </select>
-                            <small>Configure YouTube channels for a specific Discord server</small>
+            </div>
+
+            <!-- Twitch Configuration Tab -->
+            <div id="twitch" class="tab-content">
+                <h2>🎮 Twitch Configuration</h2>
+                <div class="form-group">
+                    <label>Select Server (Guild)</label>
+                    <select id="twitchGuildId" class="input-field" onchange="loadTwitchGuildSettings(this.value)">
+                        <option value="">-- Loading servers...</option>
+                    </select>
+                </div>
+                <div id="noTwitchGuildSelected" class="info-box">
+                    <p>ℹ️ Select a server first</p>
+                    <p>Choose a Discord server from the dropdown above to configure Twitch streamers.</p>
+                </div>
+                <div id="twitchSettingsContent" class="hidden">
+                    <h3>🎮 Twitch Streamers</h3>
+                    <p>Monitor Twitch streamers for live notifications</p>
+                    <div id="twitchContainer" class="streamers-container">
+                        <div class="streamer-row">
+                            <input type="text" placeholder="Twitch username (e.g., ninja)" class="twitch-username input-field">
+                            <button type="button" class="btn btn-danger" style="padding: 6px; min-width: 36px;" onclick="this.parentElement.remove()">✕</button>
                         </div>
                     </div>
-                    
-                    <div id="youtubeSettingsContent" class="hidden">
-                        <div class="config-card youtube">
-                            <div class="config-header">
-                                <div class="config-title">📺 YouTube Channels</div>
-                                <button class="btn btn-secondary" style="padding: 6px 12px; font-size: 13px;" onclick="addYouTubeRow()">
-                                    <span>+</span> Add Channel
-                                </button>
-                            </div>
-                            <div class="config-meta">
-                                <p>Monitor YouTube channels for new video uploads</p>
-                            </div>
-                            <div id="youtubeContainer">
-                                <div class="youtube-row">
-                                    <input type="text" placeholder="Channel ID or URL" class="youtube-channel" />
-                                    <button class="btn btn-danger" style="padding: 6px; min-width: 36px;" onclick="this.parentElement.remove()">✕</button>
-                                </div>
-                            </div>
-                            <div class="action-buttons">
-                                <button class="btn btn-success" onclick="saveYouTubeConfig()">Save Channels</button>
-                            </div>
-                            <div id="youtubeStatus" class="alert hidden"></div>
+                    <button type="button" class="btn btn-secondary" onclick="addTwitchRow()">+ Add Streamer</button>
+                    <div class="form-actions">
+                        <button type="button" class="btn btn-primary" onclick="saveTwitchConfig()">Save Streamers</button>
+                    </div>
+                    <div id="twitchStatus" class="alert hidden"></div>
+                </div>
+            </div>
+
+            <!-- YouTube Configuration Tab -->
+            <div id="youtube" class="tab-content">
+                <h2>📺 YouTube Configuration</h2>
+                <div class="form-group">
+                    <label>Select Server (Guild)</label>
+                    <select id="youtubeGuildId" class="input-field" onchange="loadYouTubeGuildSettings(this.value)">
+                        <option value="">-- Loading servers...</option>
+                    </select>
+                </div>
+                <div id="noYouTubeGuildSelected" class="info-box">
+                    <p>ℹ️ Select a server first</p>
+                    <p>Choose a Discord server from the dropdown above to configure YouTube channels.</p>
+                </div>
+                <div id="youtubeSettingsContent" class="hidden">
+                    <h3>📺 YouTube Channels</h3>
+                    <p>Monitor YouTube channels for new video uploads</p>
+                    <div id="youtubeContainer" class="streamers-container">
+                        <div class="youtube-row">
+                            <input type="text" placeholder="Channel ID or URL" class="youtube-channel input-field">
+                            <button type="button" class="btn btn-danger" style="padding: 6px; min-width: 36px;" onclick="this.parentElement.remove()">✕</button>
                         </div>
                     </div>
-                    
-                    <div id="noYouTubeGuildSelected" class="alert alert-info">
-                        <strong>ℹ️ Select a server first</strong><br>
-                        Choose a Discord server from the dropdown above to configure YouTube channels.
+                    <button type="button" class="btn btn-secondary" onclick="addYouTubeRow()">+ Add Channel</button>
+                    <div class="form-actions">
+                        <button type="button" class="btn btn-primary" onclick="saveYouTubeConfig()">Save Channels</button>
                     </div>
+                    <div id="youtubeStatus" class="alert hidden"></div>
                 </div>
             </div>
         </div>
     </div>
+
+    <script src="script.js"></script>
 </body>
 </html>

@@ -1,234 +1,394 @@
-// @src/bot.js
-const { Client, GatewayIntentBits, Partials, EmbedBuilder, ActivityType } = require('discord.js');
-const { token, ownerId, mongoUri } = require('./config.json');
-const mongoose = require('mongoose');
+// src/bot.js - Integrated Event + Streaming Bot
+const { Client, GatewayIntentBits, REST, Routes } = require('discord.js');
 const fs = require('fs');
 const path = require('path');
+const { config, validateConfig } = require('./config');
 
-// Config managers
-const EventsConfig = require('./config/eventsConfig');
-const StreamingConfigManager = require('./config/streamingConfig');
+// Event bot services
+const CalendarService = require('./services/calendar');
+const EventManager = require('./services/eventManager');
+const PresetManager = require('./services/presetManager');
+const EventsConfig = require('./services/eventsConfig');
 
-// Command handler
-const commands = new Map();
-const cooldowns = new Map(); // Module-level cooldowns Map (NOT on client)
+// Streaming services
+const StreamingConfigManager = require('./services/streamingConfig');
+const TwitchMonitor = require('./services/twitchMonitor');
+const YouTubeMonitor = require('./services/youtubeMonitor');
 
-// Initialize config managers
-const eventsConfig = new EventsConfig();
-const streamingConfig = new StreamingConfigManager();
+// Discord builders
+const EmbedBuilder = require('./discord/embedBuilder');
+const ButtonBuilder = require('./discord/buttonBuilder');
+
+// Utilities
+const { parseDateTime } = require('./utils/datetime');
+
+// Validate configuration
+validateConfig();
+
+// Initialize event services
+const calendarService = new CalendarService(
+  config.google.credentials,
+  config.google.calendars
+);
+const eventManager = new EventManager(config.files.events, calendarService);
+const presetManager = new PresetManager(config.files.presets);
+const eventsConfig = new EventsConfig(
+  config.files.eventsConfig || path.join(__dirname, '../data/events-config.json')
+);
+
+// Initialize streaming services
+const streamingConfig = new StreamingConfigManager(
+  config.files.streaming || path.join(__dirname, '../data/streaming-config.json')
+);
+
+let twitchMonitor = null;
+let youtubeMonitor = null;
 
 // Initialize Discord client
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
     GatewayIntentBits.GuildMessages,
-    GatewayIntentBits.GuildMembers,
     GatewayIntentBits.MessageContent,
-    GatewayIntentBits.GuildPresences,
-    GatewayIntentBits.GuildVoiceStates
-  ],
-  partials: [Partials.Message, Partials.Channel, Partials.User, Partials.GuildMember]
+  ]
 });
 
-// Load commands
-const commandsPath = path.join(__dirname, 'commands');
-const commandFiles = fs.readdirSync(commandsPath).filter(file => file.endsWith('.js'));
+// Auto-sync state
+let autoSyncInterval = null;
+let autoSyncChannelId = null;
+let autoSyncGuildId = null;
 
-for (const file of commandFiles) {
-  const filePath = path.join(commandsPath, file);
-  const command = require(filePath);
+/**
+ * Load all commands dynamically
+ */
+function loadCommands() {
+  const commands = new Map();
   
-  if ('data' in command && 'execute' in command) {
-    commands.set(command.data.name, command);
-  } else {
-    console.warn(`⚠️ Command at ${filePath} is missing required "data" or "execute" property.`);
+  // Load event commands
+  const eventCommandsPath = path.join(__dirname, 'discord', 'commands');
+  if (fs.existsSync(eventCommandsPath)) {
+    const commandFiles = fs.readdirSync(eventCommandsPath).filter(file => file.endsWith('.js'));
+    for (const file of commandFiles) {
+      try {
+        const command = require(path.join(eventCommandsPath, file));
+        if (command.data && command.execute) {
+          commands.set(command.data.name, command);
+          console.log(`✓ Loaded event command: ${command.data.name}`);
+        }
+      } catch (error) {
+        console.error(`✗ Failed to load ${file}:`, error.message);
+      }
+    }
+  }
+  
+  // Load streaming commands
+  const streamingCommandsPath = path.join(__dirname, 'discord', 'streamingCommands');
+  if (fs.existsSync(streamingCommandsPath)) {
+    const commandFiles = fs.readdirSync(streamingCommandsPath).filter(file => file.endsWith('.js'));
+    for (const file of commandFiles) {
+      try {
+        const command = require(path.join(streamingCommandsPath, file));
+        if (command.data && command.execute) {
+          commands.set(command.data.name, command);
+          console.log(`✓ Loaded streaming command: ${command.data.name}`);
+        }
+      } catch (error) {
+        console.error(`✗ Failed to load ${file}:`, error.message);
+      }
+    }
+  }
+  
+  return commands;
+}
+
+const commands = loadCommands();
+
+/**
+ * Register slash commands
+ */
+async function registerCommands(clientId) {
+  const rest = new REST({ version: '10' }).setToken(config.discord.token);
+  
+  try {
+    console.log('🔄 Registering slash commands...');
+    
+    const commandData = Array.from(commands.values()).map(cmd => cmd.data);
+    
+    await rest.put(
+      Routes.applicationCommands(clientId),
+      { body: commandData },
+    );
+    
+    console.log(`✅ Registered ${commandData.length} slash commands!`);
+  } catch (error) {
+    console.error('❌ Error registering slash commands:', error);
   }
 }
 
-// Event handlers
-client.on('ready', async () => {
-  console.log(`✅ Logged in as ${client.user.tag}!`);
-  console.log(`✅ Serving ${client.guilds.cache.size} servers`);
+/**
+ * Start auto-sync for calendar events
+ */
+function startAutoSync(channelId, guildId) {
+  autoSyncChannelId = channelId;
+  autoSyncGuildId = guildId;
   
-  // Set bot activity using v14 ActivityType enum
-  client.user.setActivity('for /help', { type: ActivityType.Watching });
+  syncFromCalendar(channelId, guildId).catch(console.error);
   
-  // ==========================================
-  // POPULATE GUILD NAMES FOR EXISTING SERVERS (BATCHED SAVE)
-  // ==========================================
-  let eventsUpdated = 0;
-  let streamingUpdated = 0;
-  let processErrors = 0;
-
-  // Process all guilds immediately (no delay)
-  client.guilds.cache.forEach(guild => {
-    // Events config - updates in-memory only (no immediate persistence)
+  autoSyncInterval = setInterval(async () => {
+    console.log('[AutoSync] Running scheduled sync...');
     try {
-      const eventsCfg = eventsConfig.getGuildConfig(guild.id);
-      if (!eventsCfg?.guildName) {
-        eventsConfig.setGuildName(guild.id, guild.name);
-        eventsUpdated++;
-      }
-    } catch (err) {
-      processErrors++;
-      console.warn(`⚠️ Events config: Error processing guild ${guild.id}:`, err.message);
+      await syncFromCalendar(channelId, guildId);
+    } catch (error) {
+      console.error('[AutoSync] ❌ Error during scheduled sync:', error);
     }
+  }, config.bot.autoSyncInterval);
+  
+  console.log('[AutoSync] ✅ Auto-sync enabled');
+}
 
-    // Streaming config - updates in-memory only (no immediate persistence)
-    try {
-      const streamingCfg = streamingConfig.getGuildConfig(guild.id);
-      if (!streamingCfg?.guildName) {
-        streamingConfig.setGuildName(guild.id, guild.name);
-        streamingUpdated++;
-      }
-    } catch (err) {
-      processErrors++;
-      console.warn(`⚠️ Streaming config: Error processing guild ${guild.id}:`, err.message);
-    }
-  });
+/**
+ * Stop auto-sync
+ */
+function stopAutoSync() {
+  if (autoSyncInterval) {
+    clearInterval(autoSyncInterval);
+    autoSyncInterval = null;
+    autoSyncChannelId = null;
+    autoSyncGuildId = null;
+    console.log('[AutoSync] ❌ Auto-sync disabled');
+  }
+}
 
-  // Batch persist all changes (single write per config service)
-  try {
-    if (eventsUpdated > 0) await eventsConfig.save();
-    if (streamingUpdated > 0) await streamingConfig.save();
+/**
+ * Sync events from Google Calendar
+ */
+async function syncFromCalendar(channelId, guildId, calendarFilter = null) {
+  const result = await calendarService.syncEvents(168, calendarFilter);
+  let postedCount = 0;
+
+  if (result.success && result.events.length > 0) {
+    const channel = await client.channels.fetch(channelId);
     
-    if (eventsUpdated + streamingUpdated > 0) {
-      console.log(`✅ Batch saved guild names: ${eventsUpdated} (events) + ${streamingUpdated} (streaming)`);
+    for (const eventData of result.events) {
+      const event = eventManager.importCalendarEvent(eventData, channelId, guildId);
+      
+      if (event) {
+        const eventEmbed = EmbedBuilder.createEventEmbed(event);
+        const buttons = ButtonBuilder.createSignupButtons(event);
+        
+        const sentMessage = await channel.send({ 
+          embeds: [eventEmbed],
+          components: buttons || []
+        });
+        
+        eventManager.updateEvent(event.id, { messageId: sentMessage.id });
+        postedCount++;
+      }
     }
-    if (processErrors > 0) {
-      console.log(`⚠️ Skipped ${processErrors} guild(s) due to config errors`);
-    }
-    if (eventsUpdated === 0 && streamingUpdated === 0 && processErrors === 0) {
-      console.log('ℹ️ All guild names already present in configs');
-    }
-  } catch (saveErr) {
-    console.error('❌ Critical failure during batch config save:', saveErr);
+    
+    console.log(`[AutoSync] ✅ Posted ${postedCount} new events (filtered from ${result.events.length} calendar events)`);
+  }
+  
+  return result;
+}
+
+// Bot ready event
+client.once('ready', async () => {
+  console.log('\n╔═══════════════════════════════════════════════════════╗');
+  console.log(`║ 🤖 ${client.user.tag} is online!`);
+  console.log('╠═══════════════════════════════════════════════════════╣');
+  console.log(`║ 📅 Events System: Ready`);
+  console.log(`║ 🔗 Google Calendar: ${calendarService.isEnabled() ? 'Connected' : 'Not configured'}`);
+  console.log(`║ 📋 Presets: ${presetManager.getPresetCount()} loaded`);
+  console.log('╠═══════════════════════════════════════════════════════╣');
+  console.log(`║ 🎮 Twitch Monitor: ${config.twitch?.enabled ? 'Enabled' : 'Disabled (no credentials)'}`);
+  console.log(`║ 📺 YouTube Monitor: Enabled (RSS-based)`);
+  console.log('╚═══════════════════════════════════════════════════════╝\n');
+  
+  config.discord.clientId = client.user.id;
+
+  // Register commands
+  await registerCommands(client.user.id);
+
+  // Test calendar connection
+  if (calendarService.isEnabled()) {
+    await calendarService.testConnection();
+  }
+
+  // Initialize and start streaming monitors
+  if (config.twitch?.enabled) {
+    twitchMonitor = new TwitchMonitor(client, config, streamingConfig);
+    twitchMonitor.start();
+  }
+
+  youtubeMonitor = new YouTubeMonitor(client, config, streamingConfig);
+  youtubeMonitor.start();
+});
+
+// Handle autocomplete
+client.on('interactionCreate', async interaction => {
+  if (!interaction.isAutocomplete()) return;
+  
+  if (interaction.commandName === 'preset' || interaction.commandName === 'deletepreset') {
+    const focusedValue = interaction.options.getFocused();
+    const presets = presetManager.searchPresets(focusedValue);
+    
+    await interaction.respond(
+      presets.slice(0, 25).map(preset => ({ 
+        name: preset.name, 
+        value: preset.key 
+      }))
+    );
   }
 });
 
+// Handle slash commands
 client.on('interactionCreate', async interaction => {
   if (!interaction.isChatInputCommand()) return;
-
+  
   const command = commands.get(interaction.commandName);
-  if (!command) return;
 
-  // Cooldown handling - use module-level cooldowns Map (NOT destructured from client)
-  if (!cooldowns.has(command.data.name)) {
-    cooldowns.set(command.data.name, new Map());
+  if (!command) {
+    console.error(`No command matching ${interaction.commandName}`);
+    return;
   }
 
-  const now = Date.now();
-  const timestamps = cooldowns.get(command.data.name);
-  const defaultCooldownDuration = 3;
-  const cooldownAmount = (command.cooldown ?? defaultCooldownDuration) * 1000;
+  try {
+    // Create context object with all services
+    const context = {
+      // Event services
+      eventManager,
+      presetManager,
+      calendarService,
+      eventsConfig,
+      parseDateTime,
+      startAutoSync,
+      stopAutoSync,
+      syncFromCalendar,
+      autoSyncInterval,
+      EmbedBuilder,
+      ButtonBuilder,
+      
+      // Streaming services
+      streamingConfig,
+      twitchMonitor,
+      youtubeMonitor
+    };
+    
+    await command.execute(interaction, context);
+  } catch (error) {
+    console.error(`Error executing ${interaction.commandName}:`, error);
+    
+    const reply = { content: `❌ Error: ${error.message}`, ephemeral: true };
+    
+    if (interaction.replied || interaction.deferred) {
+      await interaction.editReply(reply);
+    } else {
+      await interaction.reply(reply);
+    }
+  }
+});
 
-  if (timestamps.has(interaction.user.id)) {
-    const expirationTime = timestamps.get(interaction.user.id) + cooldownAmount;
-    if (now < expirationTime) {
-      const expiredTimeout = expirationTime - now;
-      return interaction.reply({
-        content: `⚠️ Please wait ${Math.round(expiredTimeout / 1000)} more second(s) before reusing the \`${command.data.name}\` command.`,
+// Handle button interactions (for event signups)
+client.on('interactionCreate', async (interaction) => {
+  if (!interaction.isButton()) return;
+  
+  try {
+    const { action, eventId, roleName } = ButtonBuilder.parseButtonId(interaction.customId);
+    const event = eventManager.getEvent(eventId);
+    
+    if (!event) {
+      return interaction.reply({ 
+        content: '❌ Event not found. The event may have been deleted.', 
         ephemeral: true
       });
     }
-  }
-
-  timestamps.set(interaction.user.id, now);
-  setTimeout(() => timestamps.delete(interaction.user.id), cooldownAmount);
-
-  // Execute command
-  try {
-    await command.execute(interaction, { eventsConfig, streamingConfig });
-  } catch (error) {
-    console.error(`❌ Error executing ${interaction.commandName}:`, error);
-    if (interaction.replied || interaction.deferred) {
-      await interaction.followUp({ content: '❌ There was an error while executing this command!', ephemeral: true });
-    } else {
-      await interaction.reply({ content: '❌ There was an error while executing this command!', ephemeral: true });
-    }
-  }
-});
-
-// Streaming presence tracking
-client.on('presenceUpdate', async (oldPresence, newPresence) => {
-  if (!newPresence?.member || !newPresence.guild) return;
-  
-  try {
-    const guildConfig = streamingConfig.getGuildConfig(newPresence.guild.id);
-    if (!guildConfig?.enabled || !guildConfig.channels?.length) return;
     
-    // Handle streaming status changes
-    const wasStreaming = oldPresence?.activities?.some(a => a.type === 1);
-    const isStreaming = newPresence.activities?.some(a => a.type === 1);
-    
-    if (!wasStreaming && isStreaming) {
-      // User started streaming
-      const streamActivity = newPresence.activities.find(a => a.type === 1);
-      streamingConfig.addActiveStream(
-        newPresence.guild.id,
-        newPresence.userId,
-        streamActivity.name,
-        streamActivity.url
-      );
-      
-      // Notify channels
-      for (const channelId of guildConfig.channels) {
-        const channel = newPresence.guild.channels.cache.get(channelId);
-        if (channel?.isTextBased()) {
-          const member = newPresence.member;
-          const embed = new EmbedBuilder()
-            .setColor('#6441A5')
-            .setTitle('🔴 Live Stream Started')
-            .setDescription(`${member} is now streaming **${streamActivity.name}**`)
-            .setURL(streamActivity.url || 'https://twitch.tv/')
-            .setThumbnail(member.displayAvatarURL())
-            .setTimestamp();
-          
-          try {
-            await channel.send({ embeds: [embed] });
-          } catch (err) {
-            console.warn(`⚠️ Failed to send stream notification to channel ${channelId}:`, err.message);
-          }
-        }
+    if (action === 'signup') {
+      const role = event.roles.find(r => r.name === roleName);
+      if (!role) {
+        return interaction.reply({ content: '❌ Role not found.', ephemeral: true });
       }
-    } else if (wasStreaming && !isStreaming) {
-      // User stopped streaming
-      streamingConfig.removeActiveStream(newPresence.guild.id, newPresence.userId);
+      
+      if (event.signups[roleName]?.includes(interaction.user.id)) {
+        return interaction.reply({ 
+          content: `✅ You're already signed up as ${role.emoji} ${roleName}!`, 
+          ephemeral: true 
+        });
+      }
+      
+      eventManager.signupUser(eventId, interaction.user.id, roleName);
+      
+      const updatedEvent = eventManager.getEvent(eventId);
+      const updatedEmbed = EmbedBuilder.createEventEmbed(updatedEvent);
+      const buttons = ButtonBuilder.createSignupButtons(updatedEvent);
+      
+      await interaction.update({ embeds: [updatedEmbed], components: buttons || [] });
+      await interaction.followUp({ 
+        content: `✅ Signed up as ${role.emoji} ${roleName}!`, 
+        ephemeral: true 
+      });
     }
-  } catch (err) {
-    console.error(`❌ Error in presenceUpdate handler for guild ${newPresence.guild?.id}:`, err);
-  }
-});
-
-// Database connection and login
-(async () => {
-  try {
-    await mongoose.connect(mongoUri, {
-      useNewUrlParser: true,
-      useUnifiedTopology: true,
-    });
-    console.log('✅ Connected to MongoDB');
     
-    await client.login(token);
+    if (action === 'leave') {
+      const { removed } = eventManager.removeUser(eventId, interaction.user.id);
+      
+      if (!removed) {
+        return interaction.reply({ 
+          content: '❌ You were not signed up for this event.', 
+          ephemeral: true 
+        });
+      }
+      
+      const updatedEvent = eventManager.getEvent(eventId);
+      const updatedEmbed = EmbedBuilder.createEventEmbed(updatedEvent);
+      const buttons = ButtonBuilder.createSignupButtons(updatedEvent);
+      
+      await interaction.update({ embeds: [updatedEmbed], components: buttons || [] });
+      await interaction.followUp({ 
+        content: '✅ You have left the event.', 
+        ephemeral: true 
+      });
+    }
   } catch (error) {
-    console.error('❌ Critical startup error:', error);
-    process.exit(1);
+    console.error('Error handling button interaction:', error);
+    await interaction.reply({ content: `❌ Error: ${error.message}`, ephemeral: true });
   }
-})();
-
-// Graceful shutdown
-process.on('SIGINT', async () => {
-  console.log('\n⚠️ Received SIGINT. Shutting down gracefully...');
-  await mongoose.connection.close();
-  console.log('✅ MongoDB connection closed');
-  process.exit(0);
 });
 
-process.on('SIGTERM', async () => {
-  console.log('\n⚠️ Received SIGTERM. Shutting down gracefully...');
-  await mongoose.connection.close();
-  console.log('✅ MongoDB connection closed');
-  process.exit(0);
+// Handle guild removal
+client.on('guildDelete', async (guild) => {
+  try {
+    // Clean up events config
+    eventsConfig.deleteGuildConfig(guild.id);
+    
+    // Clean up streaming config
+    streamingConfig.deleteGuildConfig(guild.id);
+    
+    console.log(`✅ Bot removed from guild ${guild.name} (${guild.id}) - configs cleaned up`);
+  } catch (error) {
+    console.error(`❌ Error cleaning up configs for guild ${guild.id}:`, error);
+  }
 });
 
-module.exports = { client, commands };
+// Login
+client.login(config.discord.token).catch(error => {
+  console.error('Failed to login:', error.message);
+  console.log('\n⚠️  Please set your Discord bot token in the .env file');
+  process.exit(1);
+});
+
+// Export for testing
+module.exports = {
+  client,
+  eventManager,
+  presetManager,
+  calendarService,
+  streamingConfig,
+  get twitchMonitor() {
+    return twitchMonitor;
+  },
+  get youtubeMonitor() {
+    return youtubeMonitor;
+  }
+};

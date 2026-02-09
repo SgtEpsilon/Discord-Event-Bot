@@ -19,14 +19,12 @@ Complete reference for navigating and modifying the codebase.
 discord-event-bot/
 ├── src/                        # Source code
 │   ├── bot.js                 # Main entry point
-│   ├── config.js              # Alternative config (legacy)
 │   ├── config/                # Configuration
 │   ├── discord/               # Discord-specific code
 │   ├── services/              # Business logic
 │   └── utils/                 # Utility functions
 ├── data/                       # Data storage (JSON files)
 ├── public/                     # Web interface files
-├── docs/                       # Documentation
 └── [config files]             # Root config files
 ```
 
@@ -68,8 +66,10 @@ discord-event-bot/
 {
   discord: { token, clientId },
   google: { credentials, calendarIds, calendars },
-  web: { port, host },
-  files: { events, presets },
+  twitch: { clientId, clientSecret, enabled },
+  youtube: { enabled },
+  web: { port, host, apiKey },
+  files: { events, presets, eventsConfig, streaming },
   bot: { commandPrefix, autoSyncInterval }
 }
 ```
@@ -101,7 +101,11 @@ module.exports = {
 **Files:**
 - `create.js` - Create custom events
 - `preset.js` - Create from preset templates
-- `presets.js` - List available presets
+- `set-event-channel.js` - Set designated event channel
+- `clear-event-channel.js` - Clear event channel configuration
+- `event-channel.js` - Show current event channel status
+
+**Legacy commands (handled via commandHandlers.js):**
 - `addrole.js` - Add signup roles to events
 - `list.js` - Show all events
 - `delete.js` - Delete events
@@ -110,6 +114,8 @@ module.exports = {
 - `calendars.js` - List calendars
 - `autosync.js` - Auto-sync management
 - `help.js` - Help information
+- `presets.js` - List available presets
+- `deletepreset.js` - Delete custom presets
 
 **Modify when:**
 - Adding new event-related commands
@@ -172,6 +178,38 @@ static parseButtonId(customId)     // Parse button interactions
 
 ---
 
+#### **`src/discord/commandHandlers.js`** - Legacy Command Handlers
+**Purpose:** Central handler functions for commands (being migrated)
+
+**Contains handlers for:**
+- `/create`, `/preset`, `/presets`, `/addrole`
+- `/list`, `/delete`, `/sync`, `/calendars`
+- `/eventinfo`, `/autosync`, `/help`, `/deletepreset`
+
+**Note:** New commands use individual files in `commands/` directory
+
+---
+
+#### **`src/discord/interactionHandlers.js`** - Button Interaction Logic
+**Purpose:** Handle button clicks for event signups/leaves
+
+**Key Functions:**
+```javascript
+handleButtonInteraction(interaction, context)
+handleSignup(interaction, event, roleName, context)
+handleLeave(interaction, event, context)
+handleAutocomplete(interaction, context)
+```
+
+---
+
+#### **`src/discord/commands.js`** - Legacy Command Definitions
+**Purpose:** SlashCommandBuilder definitions for all commands
+
+**Note:** Being phased out in favor of individual command files
+
+---
+
 ### `/src/services` - Business Logic Layer
 
 #### **`src/services/eventManager.js`** - Event CRUD Operations
@@ -184,6 +222,7 @@ createFromPreset(preset, dateTime)        // Create from template
 getEvent(eventId)                         // Retrieve event
 getAllEvents()                            // Get all events
 getGuildEvents(guildId)                   // Guild-specific events
+getUpcomingEvents(guildId)                // Future events only
 updateEvent(eventId, updates)             // Modify event
 deleteEvent(eventId)                      // Remove event
 addRole(eventId, role)                    // Add signup role
@@ -211,6 +250,8 @@ getPreset(key)                     // Get specific preset
 createPreset(key, presetData)      // Create new preset
 updatePreset(key, updates)         // Modify preset
 deletePreset(key)                  // Remove preset
+getPresetKeys()                    // Get all preset IDs
+getPresetCount()                   // Count presets
 searchPresets(query)               // Search by name/key
 ```
 
@@ -219,6 +260,36 @@ searchPresets(query)               // Search by name/key
 - Changing preset structure
 - Adding preset validation
 - Modifying preset search
+
+---
+
+#### **`src/services/eventsConfig.js`** - Events Configuration
+**Purpose:** Manage per-guild event settings
+
+**Key Methods:**
+```javascript
+getGuildConfig(guildId)            // Get guild settings
+setEventChannel(guildId, channelId) // Set event channel
+getEventChannel(guildId)           // Get event channel
+removeEventChannel(guildId)        // Clear event channel
+hasEventChannel(guildId)           // Check if channel set
+deleteGuildConfig(guildId)         // Cleanup on removal
+getStats()                         // Configuration stats
+```
+
+**Data Structure:**
+```javascript
+{
+  eventChannelId: "channel_id",
+  createdAt: "ISO timestamp",
+  updatedAt: "ISO timestamp"
+}
+```
+
+**Modify when:**
+- Adding per-guild settings
+- Changing configuration structure
+- Adding new guild features
 
 ---
 
@@ -248,6 +319,7 @@ getCalendars()                     // Get configured calendars
 **Key Methods:**
 ```javascript
 getGuildConfig(guildId)            // Get guild settings
+createDefaultConfig()              // Create default settings
 setNotificationChannel(guildId, channelId)
 addTwitchStreamer(guildId, username, customMessage)
 removeTwitchStreamer(guildId, username)
@@ -255,6 +327,24 @@ addYouTubeChannel(guildId, channelId)
 removeYouTubeChannel(guildId, channelId)
 getAllGuildConfigs()               // Get all guild configs
 deleteGuildConfig(guildId)         // Cleanup on bot removal
+```
+
+**Data Structure:**
+```javascript
+{
+  notificationChannelId: "channel_id",
+  twitch: {
+    enabled: boolean,
+    streamers: ["username1", "username2"],
+    message: "template string",
+    customMessages: { "username": "custom template" }
+  },
+  youtube: {
+    enabled: boolean,
+    channels: ["channel_id1", "channel_id2"],
+    message: "template string"
+  }
+}
 ```
 
 **Modify when:**
@@ -273,9 +363,17 @@ getAccessToken()                   // OAuth token management
 checkStreams()                     // Check all streamers
 processLiveStreams(streams, configs)
 sendNotification(guildId, config, stream)
+validateUsername(username)         // Verify streamer exists
 start()                            // Start monitoring
 stop()                             // Stop monitoring
 ```
+
+**Features:**
+- Token caching and auto-refresh
+- Rate limit protection
+- Batch stream checking (up to 100 per request)
+- Live stream deduplication
+- Custom notifications per streamer
 
 **Modify when:**
 - Changing check interval
@@ -292,18 +390,33 @@ stop()                             // Stop monitoring
 ```javascript
 checkVideos()                      // Check all channels
 sendNotification(video, guildId, config)
+checkSpecificChannels(channelIds)  // Manual check
 validateChannelId(channelId)       // Verify channel exists
 extractChannelId(input)            // Parse various formats
 resolveHandleToChannelId(handle)   // @handle → channel ID
 getChannelName(channelId)          // Get display name
 start() / stop()                   // Control monitoring
+isEnabled()                        // Check if enabled
 ```
+
+**Features:**
+- RSS-based (no API quotas!)
+- Supports @handles and channel IDs
+- Per-guild video tracking
+- Auto-initialization on first run
 
 **Modify when:**
 - Changing check interval
 - Modifying notification format
 - Adding video filtering
 - Updating RSS parsing
+
+---
+
+#### **`src/services/syncService.js`** - Sync Service (Legacy)
+**Purpose:** Legacy interaction handlers (being migrated)
+
+**Note:** Functionality moved to `interactionHandlers.js`
 
 ---
 
@@ -376,15 +489,12 @@ has(key)                           // Check existence
     "guildId": "guild_id",
     "messageId": "message_id",
     "calendarLink": "https://...",
-    "calendarEventId": "cal_event_id"
+    "calendarEventId": "cal_event_id",
+    "calendarSource": "Calendar Name",
+    "calendarSourceId": "calendar_id_event_id"
   }
 }
 ```
-
-**Modify when:**
-- Adding event properties
-- Changing data structure
-- Implementing data migration
 
 ---
 
@@ -406,14 +516,27 @@ has(key)                           // Check existence
 }
 ```
 
-**Modify when:**
-- Adding new game presets
-- Changing preset structure
-- Updating role configurations
+**Default presets include:** overwatch, helldivers, division, wow-raid, destiny-raid, valorant, apex, league, dnd, minecraft, cod-warzone, ffxiv-raid, csgo, phasmophobia, among-us, sea-of-thieves, rust, tarkov
 
 ---
 
-#### **`data/streaming.json`** - Streaming Configuration
+#### **`data/events-config.json`** - Events Configuration
+**Structure:**
+```json
+{
+  "guild_id_123": {
+    "eventChannelId": "channel_id",
+    "createdAt": "2026-02-09T...",
+    "updatedAt": "2026-02-09T..."
+  }
+}
+```
+
+**Purpose:** Store per-guild event channel configuration
+
+---
+
+#### **`data/streaming-config.json`** - Streaming Configuration
 **Structure:**
 ```json
 {
@@ -436,11 +559,6 @@ has(key)                           // Check existence
 }
 ```
 
-**Modify when:**
-- Adding streaming platforms
-- Changing notification format
-- Adding guild-specific features
-
 ---
 
 ### `/public` - Web Interface
@@ -448,12 +566,26 @@ has(key)                           // Check existence
 #### **`public/index.html`** - Web Dashboard
 **Purpose:** Browser-based event management
 
-**Sections:**
+**Features:**
+- Discord-styled UI
 - Statistics dashboard
-- Events tab (view/delete)
-- Presets tab (browse)
-- Create event form
-- Create preset form
+- Event management (view/create/delete)
+- Preset browsing and usage
+- Settings configuration per guild
+- API key authentication
+
+**Sections:**
+- **Dashboard** - Statistics overview
+- **Events Tab** - View and manage events
+- **Presets Tab** - Browse game templates
+- **Create Event Tab** - Custom event form
+- **Create Preset Tab** - Custom preset builder
+- **Create from Preset Tab** - Quick event creation
+- **Settings Tab** - Guild-specific configuration
+  - Event channel configuration
+  - Twitch streamer management
+  - YouTube channel management
+  - Notification channel settings
 
 **API Integration:**
 ```javascript
@@ -462,7 +594,13 @@ fetch('/api/events', { POST })    // Create event
 fetch('/api/events/:id', { DELETE })
 fetch('/api/presets')             // GET presets
 fetch('/api/stats')               // Statistics
+fetch('/api/event-channel/:guildId')  // Guild config
 ```
+
+**Authentication:**
+- Uses `X-API-Key` header
+- Stored in `localStorage`
+- Validates against `WEB_API_KEY` env var
 
 **Modify when:**
 - Adding new UI features
@@ -477,29 +615,75 @@ fetch('/api/stats')               // Statistics
 #### **`web-server.js`** - Express API Server
 **Purpose:** REST API for web interface
 
+**Authentication:**
+```javascript
+verifyApiKey()                    // Middleware for protected routes
+authorizeGuildAccess()            // Guild-specific permissions
+```
+
 **Endpoints:**
+
+**Events:**
 ```javascript
 GET    /api/events                // List all events
 GET    /api/events/:id            // Get single event
 POST   /api/events                // Create event
 PUT    /api/events/:id            // Update event
 DELETE /api/events/:id            // Delete event
+POST   /api/events/from-preset    // Create from preset
+```
 
+**Presets:**
+```javascript
 GET    /api/presets               // List presets
 POST   /api/presets               // Create preset
 PUT    /api/presets/:key          // Update preset
 DELETE /api/presets/:key          // Delete preset
-
-POST   /api/events/from-preset    // Create event from preset
-GET    /api/stats                 // Bot statistics
-GET    /api/health                // Health check
 ```
+
+**Configuration:**
+```javascript
+GET    /api/event-channel/:guildId     // Get event channel
+POST   /api/event-channel/:guildId     // Set event channel
+DELETE /api/event-channel/:guildId     // Clear event channel
+```
+
+**Stats & Health:**
+```javascript
+GET    /api/stats                 // Bot statistics
+GET    /api/health                // Health check (public)
+```
+
+**Security Notes:**
+- API key required for all `/api/*` routes except `/api/health`
+- Uses timing-safe comparison for API keys
+- Supports both `X-API-Key` header and `Authorization: Bearer` token
+
+**⚠️ CRITICAL:** Concurrent access warning - web server and bot both access JSON files directly. Risk of data corruption. See comments in file for recommended fixes.
 
 **Modify when:**
 - Adding new API endpoints
 - Changing API responses
 - Adding authentication
 - Implementing WebSocket updates
+
+---
+
+#### **`start-all.js`** - Multi-Process Launcher
+**Purpose:** Cross-platform solution to start both bot and web server
+
+**Usage:**
+```bash
+npm run start:all
+# or
+node start-all.js
+```
+
+**Features:**
+- Spawns both Discord bot and web server
+- Handles process termination
+- Graceful shutdown on Ctrl+C
+- Cross-platform compatible
 
 ---
 
@@ -517,9 +701,15 @@ CALENDAR_IDS=primary,id2
 TWITCH_CLIENT_ID=client_id
 TWITCH_CLIENT_SECRET=secret
 
-# Optional - Web
+# Optional - Web Interface
 WEB_PORT=3000
+WEB_API_KEY=your_secure_key_here
 ```
+
+**Security:**
+- Never commit to git (in `.gitignore`)
+- Use `.env.example` as template
+- Generate `WEB_API_KEY` with: `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`
 
 ---
 
@@ -530,6 +720,8 @@ WEB_PORT=3000
   "start": "node src/bot.js",
   "web": "node web-server.js",
   "start:all": "node start-all.js",
+  "dev": "nodemon src/bot.js",
+  "dev:web": "nodemon web-server.js",
   "dev:all": "concurrently ..."
 }
 ```
@@ -538,6 +730,7 @@ WEB_PORT=3000
 - `discord.js` - Discord API
 - `googleapis` - Google Calendar
 - `express` - Web server
+- `cors` - CORS support
 - `axios` - HTTP requests
 - `xml2js` - YouTube RSS parsing
 
@@ -563,7 +756,7 @@ WEB_PORT=3000
 ### Calendar Integration
 1. **Sync logic** → `src/services/calendar.js`
 2. **Import handling** → `src/services/eventManager.js`
-3. **Commands** → `src/discord/commands/sync.js`, `autosync.js`
+3. **Commands** → Legacy `commandHandlers.js` (sync, autosync)
 
 ### Streaming Features
 1. **Twitch** → `src/services/twitchMonitor.js`
@@ -572,14 +765,20 @@ WEB_PORT=3000
 4. **Commands** → `src/discord/streamingCommands/`
 
 ### User Interactions
-1. **Button clicks** → `src/bot.js` (button interaction handler)
+1. **Button clicks** → `src/discord/interactionHandlers.js`
 2. **Signups** → `src/services/eventManager.js`
-3. **Autocomplete** → `src/bot.js` (autocomplete handler)
+3. **Autocomplete** → `src/discord/interactionHandlers.js`
 
 ### Web Interface
 1. **Frontend** → `public/index.html`
 2. **Backend API** → `web-server.js`
 3. **Services** → `src/services/*` (shared with Discord bot)
+
+### Event Channel Configuration
+1. **Service** → `src/services/eventsConfig.js`
+2. **Commands** → `src/discord/commands/set-event-channel.js`, `clear-event-channel.js`, `event-channel.js`
+3. **API** → `web-server.js` (`/api/event-channel/:guildId`)
+4. **Usage** → `src/discord/commands/create.js`, `preset.js`
 
 ---
 
@@ -759,7 +958,7 @@ newPlatformMonitor.start();
 **1. Add route to web server:**
 ```javascript
 // web-server.js
-app.get('/api/my-endpoint', (req, res) => {
+app.get('/api/my-endpoint', verifyApiKey(), (req, res) => {
   try {
     const data = eventManager.getSomeData();
     res.json({ success: true, data });
@@ -773,7 +972,11 @@ app.get('/api/my-endpoint', (req, res) => {
 ```javascript
 // public/index.html
 async function fetchMyData() {
-  const response = await fetch('/api/my-endpoint');
+  const response = await fetch('/api/my-endpoint', {
+    headers: {
+      'X-API-Key': API_KEY
+    }
+  });
   const data = await response.json();
   console.log(data);
 }
@@ -794,6 +997,8 @@ src/bot.js
 │   └── src/services/calendar.js
 ├── src/services/presetManager.js
 │   └── src/utils/storage.js
+├── src/services/eventsConfig.js
+│   └── src/utils/storage.js
 ├── src/services/streamingConfig.js
 │   └── src/utils/storage.js
 ├── src/services/twitchMonitor.js
@@ -803,6 +1008,10 @@ src/bot.js
 ├── src/discord/embedBuilder.js
 │   └── src/utils/datetime.js
 ├── src/discord/buttonBuilder.js
+├── src/discord/interactionHandlers.js
+│   ├── src/services/eventManager.js
+│   ├── src/discord/embedBuilder.js
+│   └── src/discord/buttonBuilder.js
 └── src/discord/commands/*.js
     └── context object with all services
 
@@ -810,6 +1019,7 @@ web-server.js
 ├── src/config/index.js
 ├── src/services/eventManager.js
 ├── src/services/presetManager.js
+├── src/services/eventsConfig.js
 └── src/services/calendar.js
 ```
 
@@ -887,6 +1097,10 @@ web-server.js
 **For presets:**
 1. `data/presets.json` - Template definitions
 
+**For per-guild settings:**
+1. `src/services/eventsConfig.js` - Event channel config
+2. `src/services/streamingConfig.js` - Streaming config
+
 ---
 
 ## Need More Help?
@@ -903,3 +1117,4 @@ web-server.js
 - Commands handle user interactions
 - Utilities provide helper functions
 - Storage manages data persistence
+- Config services manage per-guild settings
