@@ -2,12 +2,12 @@
 require('dotenv').config();
 
 /**
-Parse calendar IDs from environment variable
-Supports formats:
-Single: "primary"
-Multiple with names: "Work:id1,Gaming:id2"
-Multiple without names: "id1,id2,id3"
-*/
+ * Parse calendar IDs from environment variable
+ * Supports formats:
+ * Single: "primary"
+ * Multiple with names: "Work:id1,Gaming:id2"
+ * Multiple without names: "id1,id2,id3"
+ */
 function parseCalendarIds(calendarIdsString) {
   const calendars = [];
   const parts = calendarIdsString.split(',').map(s => s.trim()).filter(s => s);

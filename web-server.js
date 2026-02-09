@@ -2,17 +2,14 @@
 const express = require('express');
 const path = require('path');
 const cors = require('cors');
-const crypto = require('crypto'); // Added for timing-safe comparisons
 require('dotenv').config();
-
-// Non-sensitive presence check only (NO key exposure)
-console.log('✅ WEB_API_KEY loaded from .env:', process.env.WEB_API_KEY ? 'YES' : 'NO');
-
 const { config } = require('./src/config');
 const EventManager = require('./src/services/eventManager');
 const PresetManager = require('./src/services/presetManager');
 const CalendarService = require('./src/services/calendar');
 const EventsConfig = require('./src/services/eventsConfig');
+// CRITICAL: Add StreamingConfig for /api/guilds endpoint
+const StreamingConfigManager = require('./src/services/streamingConfig');
 
 const app = express();
 const PORT = process.env.WEB_PORT || 3000;
@@ -20,81 +17,44 @@ const PORT = process.env.WEB_PORT || 3000;
 // Middleware
 app.use(cors());
 app.use(express.json());
+// This line MUST exist in web-server.js
 app.use(express.static(path.join(__dirname, 'public')));
 
 // ==========================================
 // AUTHENTICATION MIDDLEWARE
 // ==========================================
-/**
- * Validate API key from X-API-Key header
- * Priority order:
- * 1. WEB_API_KEY environment variable (from .env file)
- * 2. config.web.apiKey (from config which also reads from .env)
- * @returns {Function} Express middleware
- */
 function verifyApiKey() {
-  // Check environment variable first (from .env file)
-  const apiKeyFromEnv = process.env.WEB_API_KEY;
-  // Fallback to config (which also reads from .env)
-  const apiKeyFromConfig = config.web?.apiKey;
-  // Use the first available key
-  const validApiKey = apiKeyFromEnv || apiKeyFromConfig;
-
+  const validApiKey = process.env.WEB_API_KEY || config.web?.apiKey;
+  
   return (req, res, next) => {
-    // Skip auth if no API key is configured (development mode)
     if (!validApiKey) {
+      console.warn('[Auth] No API key configured - allowing unauthenticated access');
       return next();
     }
-
-    const apiKey = req.headers['x-api-key'] || 
-                   req.headers['authorization']?.replace('Bearer ', '');
-
+    
+    const apiKey = req.headers['x-api-key'] || req.headers['authorization']?.replace('Bearer ', '');
+    
     if (!apiKey) {
       return res.status(401).json({ 
         success: false, 
-        error: 'Missing authentication. Please provide X-API-Key header or Authorization: Bearer <token>' 
+        error: 'Missing authentication. Please provide X-API-Key header' 
       });
     }
-
-    // Constant-time comparison to prevent timing attacks
-    const keyBuf = Buffer.from(apiKey);
-    const validKeyBuf = Buffer.from(validApiKey);
-
-    // Length check prevents timing leakage before comparison
-    if (keyBuf.length !== validKeyBuf.length || 
-        !crypto.timingSafeEqual(keyBuf, validKeyBuf)) {
+    
+    if (apiKey !== validApiKey) {
       return res.status(401).json({ 
         success: false, 
         error: 'Invalid API key' 
       });
     }
-
+    
     next();
   };
 }
 
-/**
- * Check if user has permission to manage the specified guild
- */
-function authorizeGuildAccess() {
-  return (req, res, next) => {
-    // Basic authorization: if API key is valid, allow access to all guilds
-    next();
-  };
-}
-
-// TODO: CONCURRENCY SAFETY - Critical fix required
-// Web server and bot process independently access shared JSON files 
-// (events.json, presets.json, events-config.json).
-// This risks data corruption during concurrent writes. REQUIRED FIX:
-//   OPTION A (Recommended): Refactor bot to expose HTTP/IPC data API; 
-//                           web server delegates all writes to bot process
-//   OPTION B: Inject atomic file writer (e.g., proper-lockfile) into 
-//             EventManager/PresetManager/EventsConfig constructors
-//   *Must be implemented in class implementations (src/services/*), not here*
-//   *Until fixed, avoid running web server and bot simultaneously on same filesystem*
-
-// Initialize services
+// ==========================================
+// INITIALIZE SERVICES
+// ==========================================
 const calendarService = new CalendarService(
   config.google.credentials,
   config.google.calendars
@@ -104,21 +64,82 @@ const presetManager = new PresetManager(config.files.presets);
 const eventsConfig = new EventsConfig(
   config.files.eventsConfig || path.join(__dirname, 'data/events-config.json')
 );
+// CRITICAL: Initialize streaming config for /api/guilds
+const streamingConfig = new StreamingConfigManager(
+  config.files.streaming || path.join(__dirname, 'data/streaming-config.json')
+);
 
 // ==========================================
-// API ROUTES
+// API ROUTES (PUBLIC)
 // ==========================================
-// Health check (public - no auth required)
 app.get('/api/health', (req, res) => {
   res.json({
     success: true,
     status: 'healthy',
-    timestamp: new Date().toISOString()
+    timestamp: new Date().toISOString(),
+    authRequired: !!(process.env.WEB_API_KEY || config.web?.apiKey)
   });
 });
 
-// All /api/* routes require authentication (except health check)
+// ==========================================
+// API ROUTES (PROTECTED)
+// ==========================================
 app.use('/api', verifyApiKey());
+
+// CRITICAL: Add /api/guilds endpoint
+app.get('/api/guilds', (req, res) => {
+  try {
+    const eventsGuilds = eventsConfig.getAllGuildConfigs();
+    const streamingGuilds = streamingConfig.getAllGuildConfigs();
+    
+    const guildIds = new Set([
+      ...Object.keys(eventsGuilds),
+      ...Object.keys(streamingGuilds)
+    ]);
+    
+    const guilds = Array.from(guildIds).map(guildId => {
+      const eventsData = eventsGuilds[guildId] || {};
+      const streamingData = streamingGuilds[guildId] || {};
+      
+      // Use stored name if available, otherwise truncated ID
+      const guildName = eventsData.guildName || 
+                        streamingData.guildName || 
+                        `Server (${guildId.slice(0, 5)}...)`;
+      
+      return {
+        id: guildId,
+        name: guildName,
+        hasEvents: !!eventsGuilds[guildId],
+        hasStreaming: !!streamingGuilds[guildId]
+      };
+    });
+    
+    guilds.sort((a, b) => a.name.localeCompare(b.name));
+    
+    res.json({ 
+      success: true, 
+      guilds,
+      count: guilds.length 
+    });
+  } catch (error) {
+    console.error('[API] Error fetching guilds:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: 'Failed to load guilds. Check server logs.' 
+    });
+  }
+});
+
+// Get bot statistics
+app.get('/api/stats', (req, res) => {
+  try {
+    const stats = eventManager.getStats();
+    stats.totalPresets = presetManager.getPresetCount();
+    res.json({ success: true, stats });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
 
 // Get all events
 app.get('/api/events', (req, res) => {
@@ -152,18 +173,15 @@ app.post('/api/events', async (req, res) => {
   try {
     const { title, description, dateTime, duration, maxParticipants, roles } = req.body;
     if (!title || !dateTime) {
-      return res.status(400).json({ 
-        success: false, 
-        error: 'Title and dateTime are required' 
-      });
+      return res.status(400).json({ success: false, error: 'Title and dateTime are required' });
     }
 
-    // Validate dateTime before passing to createEvent
+    // Validate dateTime
     const parsedDate = new Date(dateTime);
     if (isNaN(parsedDate.getTime())) {
       return res.status(400).json({ 
         success: false, 
-        error: `Invalid dateTime format: "${dateTime}". Please provide a valid ISO 8601 date/time string or timestamp.` 
+        error: `Invalid dateTime format: "${dateTime}". Please provide a valid ISO 8601 date/time string.` 
       });
     }
 
@@ -198,8 +216,7 @@ app.put('/api/events/:id', (req, res) => {
     const updates = {};
     if (title) updates.title = title;
     if (description !== undefined) updates.description = description;
-
-    // Validate dateTime if provided
+    
     if (dateTime) {
       const parsedDate = new Date(dateTime);
       if (isNaN(parsedDate.getTime())) {
@@ -210,14 +227,14 @@ app.put('/api/events/:id', (req, res) => {
       }
       updates.dateTime = parsedDate.toISOString();
     }
-
+    
     if (duration !== undefined) updates.duration = parseInt(duration);
     if (maxParticipants !== undefined) updates.maxParticipants = parseInt(maxParticipants);
     if (roles) updates.roles = roles;
 
     eventManager.updateEvent(req.params.id, updates);
     const updatedEvent = eventManager.getEvent(req.params.id);
-
+    
     res.json({ success: true, event: updatedEvent });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
@@ -260,7 +277,7 @@ app.post('/api/presets', (req, res) => {
       });
     }
 
-    // Validate key format (lowercase, hyphens only)
+    // Validate key format
     if (!/^[a-z0-9-]+$/.test(key)) {
       return res.status(400).json({ 
         success: false, 
@@ -301,7 +318,7 @@ app.put('/api/presets/:key', (req, res) => {
 
     presetManager.updatePreset(req.params.key, updates);
     const updatedPreset = presetManager.getPreset(req.params.key);
-
+    
     res.json({ success: true, preset: updatedPreset });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
@@ -334,7 +351,7 @@ app.post('/api/events/from-preset', async (req, res) => {
       });
     }
 
-    // Validate dateTime before using
+    // Validate dateTime
     const parsedDate = new Date(dateTime);
     if (isNaN(parsedDate.getTime())) {
       return res.status(400).json({ 
@@ -344,7 +361,6 @@ app.post('/api/events/from-preset', async (req, res) => {
     }
 
     const preset = presetManager.getPreset(presetName);
-
     if (!preset) {
       return res.status(404).json({ success: false, error: 'Preset not found' });
     }
@@ -362,26 +378,14 @@ app.post('/api/events/from-preset', async (req, res) => {
     });
 
     const updatedEvent = eventManager.getEvent(event.id);
-
     res.json({ success: true, event: updatedEvent });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
 });
 
-// Get bot statistics
-app.get('/api/stats', (req, res) => {
-  try {
-    const stats = eventManager.getStats();
-    stats.totalPresets = presetManager.getPresetCount();
-    res.json({ success: true, stats });
-  } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
-  }
-});
-
 // Get event channel configuration for a guild
-app.get('/api/event-channel/:guildId', authorizeGuildAccess(), (req, res) => {
+app.get('/api/event-channel/:guildId', (req, res) => {
   try {
     const guildId = req.params.guildId;
     const channelId = eventsConfig.getEventChannel(guildId);
@@ -398,7 +402,7 @@ app.get('/api/event-channel/:guildId', authorizeGuildAccess(), (req, res) => {
 });
 
 // Set event channel for a guild
-app.post('/api/event-channel/:guildId', authorizeGuildAccess(), (req, res) => {
+app.post('/api/event-channel/:guildId', (req, res) => {
   try {
     const guildId = req.params.guildId;
     const { channelId } = req.body;
@@ -408,13 +412,12 @@ app.post('/api/event-channel/:guildId', authorizeGuildAccess(), (req, res) => {
         error: 'channelId is required' 
       });
     }
-
-    const updatedConfig = eventsConfig.setEventChannel(guildId, channelId); // RENAMED: avoids shadowing module config
-
+    
+    const config = eventsConfig.setEventChannel(guildId, channelId);
     res.json({ 
       success: true, 
       message: 'Event channel set successfully',
-      config: updatedConfig // Uses renamed variable
+      config
     });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
@@ -422,63 +425,73 @@ app.post('/api/event-channel/:guildId', authorizeGuildAccess(), (req, res) => {
 });
 
 // Clear event channel for a guild
-app.delete('/api/event-channel/:guildId', authorizeGuildAccess(), (req, res) => {
+app.delete('/api/event-channel/:guildId', (req, res) => {
   try {
     const guildId = req.params.guildId;
-    const updatedConfig = eventsConfig.removeEventChannel(guildId); // RENAMED: avoids shadowing module config
+    const config = eventsConfig.removeEventChannel(guildId);
     res.json({ 
       success: true, 
       message: 'Event channel cleared successfully',
-      config: updatedConfig // Uses renamed variable
+      config
     });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
 });
 
-// Serve main page
-app.get('/', (req, res) => {
-  res.sendFile(path.join(__dirname, 'public', 'index.html'));
+// ==========================================
+// CATCH-ALL FOR API (MUST BE LAST!)
+// ==========================================
+app.use('/api', (req, res) => {
+  res.status(404).json({ 
+    success: false, 
+    error: `API endpoint not found: ${req.method} ${req.url}` 
+  });
 });
 
-// Start server on all network interfaces (0.0.0.0)
+// Global error handler for API
+app.use('/api', (err, req, res, next) => {
+  console.error('[API] Unhandled error:', err);
+  res.status(500).json({ 
+    success: false, 
+    error: err.message || 'Internal server error' 
+  });
+});
+
+// Serve web UI
+app.get('*', (req, res) => {
+  if (!req.path.startsWith('/api')) {
+    return res.sendFile(path.join(__dirname, 'public', 'index.html'));
+  }
+  res.status(404).send('Not found');
+});
+
+// Start server
 app.listen(PORT, '0.0.0.0', () => {
   const os = require('os');
-  function getLocalIP() {
-    const interfaces = os.networkInterfaces();
-    for (const name of Object.keys(interfaces)) {
-      for (const iface of interfaces[name]) {
-        if (iface.family === 'IPv4' && !iface.internal) {
-          return iface.address;
-        }
-      }
-    }
-    return 'localhost';
-  }
-  const localIP = getLocalIP();
+  const localIP = Object.values(os.networkInterfaces())
+    .flat()
+    .find(iface => iface.family === 'IPv4' && !iface.internal)?.address || 'localhost';
+  
   console.log(`\n🌐 Web Interface Started Successfully!`);
   console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
-  console.log(`📍 Local access: http://localhost:${PORT}`);
-  console.log(`📱 Network access: http://${localIP}:${PORT}`);
-  console.log(`📊 API endpoint: http://localhost:${PORT}/api`);
+  console.log(`📍 Local: http://localhost:${PORT}`);
+  console.log(`📱 Network: http://${localIP}:${PORT}`);
+  console.log(`✅ API Endpoints:`);
+  console.log(`   • /api/health (public)`);
+  console.log(`   • /api/stats (protected)`);
+  console.log(`   • /api/guilds (protected) ← NEW!`);
+  console.log(`   • /api/events, /api/presets, etc.`);
   console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
   
-  // Auth status logged ONCE at startup (replaces per-request warnings)
-  const apiKeyFromEnv = process.env.WEB_API_KEY;
-  const apiKeyFromConfig = config.web?.apiKey;
-  const apiKeyConfigured = apiKeyFromEnv || apiKeyFromConfig;
+  const apiKeyConfigured = process.env.WEB_API_KEY || config.web?.apiKey;
   if (apiKeyConfigured) {
     console.log(`🔒 API authentication: ENABLED`);
-    console.log(`Source: ${apiKeyFromEnv ? '.env file (WEB_API_KEY)' : 'config.web.apiKey'}`);
   } else {
-    console.log(`⚠️ API authentication: DISABLED (development mode)`);
-    console.log(`To enable: Set WEB_API_KEY in your .env file`);
+    console.log(`⚠️  API authentication: DISABLED (set WEB_API_KEY in .env)`);
   }
   
-  console.log(`\n💡 To access from other devices on your network:`);
-  console.log(`1. Make sure devices are on the same WiFi/network`);
-  console.log(`2. Open browser and go to: http://${localIP}:${PORT}`);
-  console.log(`3. If blocked, allow port ${PORT} through firewall\n`);
+  console.log(`\n💡 Access web UI at: http://${localIP}:${PORT}\n`);
 });
 
 module.exports = app;

@@ -1,144 +1,218 @@
-// src/services/streamingConfig.js
 const Storage = require('../utils/storage');
+const path = require('path');
 
+/**
+Streaming Configuration Service
+Manages per-guild streaming notification settings
+*/
 class StreamingConfigManager {
-    constructor(filePath) {
-        this.storage = new Storage(filePath);
+  constructor(configPath) {
+    this.storage = new Storage(configPath || path.join(__dirname, '../../data/streaming-config.json'));
+    this.configs = {};
+    this.load();
+  }
+
+  /**
+  Load all guild configurations from storage
+  */
+  load() {
+    try {
+      this.configs = this.storage.getAllAsObject();
+      console.log(`Loaded streaming configurations for ${Object.keys(this.configs).length} guilds`);
+    } catch (error) {
+      console.error('Error loading streaming config:', error);
+      this.configs = {};
     }
-    
-    /**
-     * Get guild streaming configuration
-     */
-    getGuildConfig(guildId) {
-        let guildConfig = this.storage.get(guildId);
-        
-        if (!guildConfig) {
-            guildConfig = this.createDefaultConfig();
-            this.storage.set(guildId, guildConfig);
-        }
-        
-        return guildConfig;
+  }
+
+  /**
+  Save configurations to storage
+  */
+  save() {
+    try {
+      this.storage.save(this.configs);
+    } catch (error) {
+      console.error('Error saving streaming config:', error);
+      throw error;
     }
-    
-    /**
-     * Create default streaming configuration
-     */
-    createDefaultConfig() {
-        return {
-            notificationChannelId: null,
-            twitch: {
-                enabled: false,
-                streamers: [], // Array of usernames
-                message: "🔴 {username} is now live on Twitch!\n**{title}**\nPlaying: {game}",
-                customMessages: {} // username -> custom message
-            },
-            youtube: {
-                enabled: false,
-                channels: [], // Array of channel IDs
-                message: "📺 {channel} just uploaded a new video!\n**{title}**"
-            }
-        };
+  }
+
+  /**
+  Get configuration for a specific guild
+  @param {string} guildId - Discord guild ID
+  @returns {Object} Guild configuration or transient default config
+  */
+  getGuildConfig(guildId) {
+    if (!this.configs[guildId]) {
+      return this.createDefaultConfig();
     }
-    
-    /**
-     * Set notification channel for guild
-     */
-    setNotificationChannel(guildId, channelId) {
-        const config = this.getGuildConfig(guildId);
-        config.notificationChannelId = channelId;
-        this.storage.set(guildId, config);
-        return config;
+    return this.configs[guildId];
+  }
+
+  /**
+  Create default configuration for a new guild
+  @returns {Object} Default configuration object
+  */
+  createDefaultConfig() {
+    return {
+      notificationChannelId: null,
+      guildName: null,  // 👈 CRITICAL: Store guild name for web UI
+      twitch: {
+        enabled: false,
+        streamers: [],
+        message: '🔴 {username} is live!'
+      },
+      youtube: {
+        enabled: false,
+        channels: [],
+        message: '📺 {channel} uploaded!'
+      },
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    };
+  }
+
+  /**
+  Set guild name for configuration
+  @param {string} guildId - Discord guild ID
+  @param {string} guildName - Guild display name
+  @returns {Object} Updated config
+  */
+  setGuildName(guildId, guildName) {  // 👈 CRITICAL: Method to set guild name
+    let config = this.configs[guildId];
+    if (!config) {
+      config = this.createDefaultConfig();
     }
-    
-    /**
-     * Add Twitch streamer
-     */
-    addTwitchStreamer(guildId, username, customMessage = null) {
-        const config = this.getGuildConfig(guildId);
-        
-        if (!config.twitch.streamers.includes(username)) {
-            config.twitch.streamers.push(username);
-        }
-        
-        if (customMessage) {
-            config.twitch.customMessages[username] = customMessage;
-        }
-        
-        config.twitch.enabled = true;
-        this.storage.set(guildId, config);
-        return config;
+    config.guildName = guildName;
+    config.updatedAt = new Date().toISOString();
+    this.configs[guildId] = config;
+    this.save();
+    return config;
+  }
+
+  /**
+  Set notification channel for a guild
+  @param {string} guildId - Discord guild ID
+  @param {string} channelId - Discord channel ID
+  @returns {Object} Updated guild configuration
+  */
+  setNotificationChannel(guildId, channelId) {
+    let config = this.configs[guildId];
+    if (!config) {
+      config = this.createDefaultConfig();
     }
-    
-    /**
-     * Remove Twitch streamer
-     */
-    removeTwitchStreamer(guildId, username) {
-        const config = this.getGuildConfig(guildId);
-        const index = config.twitch.streamers.indexOf(username);
-        
-        if (index !== -1) {
-            config.twitch.streamers.splice(index, 1);
-        }
-        
-        if (config.twitch.customMessages[username]) {
-            delete config.twitch.customMessages[username];
-        }
-        
-        if (config.twitch.streamers.length === 0) {
-            config.twitch.enabled = false;
-        }
-        
-        this.storage.set(guildId, config);
-        return config;
+    config.notificationChannelId = channelId;
+    config.updatedAt = new Date().toISOString();
+    this.configs[guildId] = config;
+    this.save();
+    return config;
+  }
+
+  /**
+  Get notification channel for a guild
+  @param {string} guildId - Discord guild ID
+  @returns {string|null} Channel ID or null if not set
+  */
+  getNotificationChannel(guildId) {
+    const config = this.getGuildConfig(guildId);
+    return config.notificationChannelId;
+  }
+
+  /**
+  Enable Twitch monitoring for a guild
+  @param {string} guildId - Discord guild ID
+  @param {Array<string>} streamers - Array of Twitch usernames
+  @param {string} message - Custom notification message
+  @returns {Object} Updated guild configuration
+  */
+  enableTwitch(guildId, streamers, message) {
+    let config = this.configs[guildId];
+    if (!config) {
+      config = this.createDefaultConfig();
     }
-    
-    /**
-     * Add YouTube channel
-     */
-    addYouTubeChannel(guildId, channelId) {
-        const config = this.getGuildConfig(guildId);
-        
-        if (!config.youtube.channels.includes(channelId)) {
-            config.youtube.channels.push(channelId);
-        }
-        
-        config.youtube.enabled = true;
-        this.storage.set(guildId, config);
-        return config;
+    config.twitch = {
+      enabled: true,
+      streamers: streamers || [],
+      message: message || config.twitch.message
+    };
+    config.updatedAt = new Date().toISOString();
+    this.configs[guildId] = config;
+    this.save();
+    return config;
+  }
+
+  /**
+  Disable Twitch monitoring for a guild
+  @param {string} guildId - Discord guild ID
+  @returns {Object} Updated guild configuration
+  */
+  disableTwitch(guildId) {
+    const config = this.configs[guildId];
+    if (config && config.twitch) {
+      config.twitch.enabled = false;
+      config.updatedAt = new Date().toISOString();
+      this.save();
     }
-    
-    /**
-     * Remove YouTube channel
-     */
-    removeYouTubeChannel(guildId, channelId) {
-        const config = this.getGuildConfig(guildId);
-        const index = config.youtube.channels.indexOf(channelId);
-        
-        if (index !== -1) {
-            config.youtube.channels.splice(index, 1);
-        }
-        
-        if (config.youtube.channels.length === 0) {
-            config.youtube.enabled = false;
-        }
-        
-        this.storage.set(guildId, config);
-        return config;
+    return config || this.createDefaultConfig();
+  }
+
+  /**
+  Enable YouTube monitoring for a guild
+  @param {string} guildId - Discord guild ID
+  @param {Array<string>} channels - Array of YouTube channel IDs/URLs
+  @param {string} message - Custom notification message
+  @returns {Object} Updated guild configuration
+  */
+  enableYouTube(guildId, channels, message) {
+    let config = this.configs[guildId];
+    if (!config) {
+      config = this.createDefaultConfig();
     }
-    
-    /**
-     * Get all guilds with streaming enabled
-     */
-    getAllGuildConfigs() {
-        return this.storage.getAllAsObject();
+    config.youtube = {
+      enabled: true,
+      channels: channels || [],
+      message: message || config.youtube.message
+    };
+    config.updatedAt = new Date().toISOString();
+    this.configs[guildId] = config;
+    this.save();
+    return config;
+  }
+
+  /**
+  Disable YouTube monitoring for a guild
+  @param {string} guildId - Discord guild ID
+  @returns {Object} Updated guild configuration
+  */
+  disableYouTube(guildId) {
+    const config = this.configs[guildId];
+    if (config && config.youtube) {
+      config.youtube.enabled = false;
+      config.updatedAt = new Date().toISOString();
+      this.save();
     }
-    
-    /**
-     * Delete guild config
-     */
-    deleteGuildConfig(guildId) {
-        return this.storage.delete(guildId);
+    return config || this.createDefaultConfig();
+  }
+
+  /**
+  Get all guild configurations
+  @returns {Object} All guild configurations
+  */
+  getAllGuildConfigs() {
+    return { ...this.configs };
+  }
+
+  /**
+  Delete configuration for a guild (cleanup on bot removal)
+  @param {string} guildId - Discord guild ID
+  */
+  deleteGuildConfig(guildId) {
+    if (this.configs[guildId]) {
+      delete this.configs[guildId];
+      this.save();
+      console.log(`Deleted streaming config for guild: ${guildId}`);
     }
+  }
 }
 
 module.exports = StreamingConfigManager;

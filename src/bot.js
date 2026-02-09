@@ -17,8 +17,10 @@ const EmbedBuilder = require('./discord/embedBuilder');
 const ButtonBuilder = require('./discord/buttonBuilder');
 // Utilities
 const { parseDateTime } = require('./utils/datetime');
+
 // Validate configuration
 validateConfig();
+
 // Initialize event services
 const calendarService = new CalendarService(
   config.google.credentials,
@@ -35,6 +37,7 @@ const streamingConfig = new StreamingConfigManager(
 );
 let twitchMonitor = null;
 let youtubeMonitor = null;
+
 // Initialize Discord client
 const client = new Client({
   intents: [
@@ -43,13 +46,15 @@ const client = new Client({
     GatewayIntentBits.MessageContent,
   ]
 });
+
 // Auto-sync state
 let autoSyncInterval = null;
 let autoSyncChannelId = null;
 let autoSyncGuildId = null;
+
 /**
-Load all commands dynamically
-*/
+ * Load all commands dynamically
+ */
 function loadCommands() {
   const commands = new Map();
   // Load event commands
@@ -87,9 +92,10 @@ function loadCommands() {
   return commands;
 }
 const commands = loadCommands();
+
 /**
-Register slash commands
-*/
+ * Register slash commands
+ */
 async function registerCommands(clientId) {
   const rest = new REST({ version: '10' }).setToken(config.discord.token);
   try {
@@ -104,9 +110,10 @@ async function registerCommands(clientId) {
     console.error('❌ Error registering slash commands:', error);
   }
 }
+
 /**
-Start auto-sync for calendar events
-*/
+ * Start auto-sync for calendar events
+ */
 function startAutoSync(channelId, guildId) {
   autoSyncChannelId = channelId;
   autoSyncGuildId = guildId;
@@ -121,9 +128,10 @@ function startAutoSync(channelId, guildId) {
   }, config.bot.autoSyncInterval);
   console.log('[AutoSync] ✅ Auto-sync enabled');
 }
+
 /**
-Stop auto-sync
-*/
+ * Stop auto-sync
+ */
 function stopAutoSync() {
   if (autoSyncInterval) {
     clearInterval(autoSyncInterval);
@@ -133,9 +141,10 @@ function stopAutoSync() {
     console.log('[AutoSync] ❌ Auto-sync disabled');
   }
 }
+
 /**
-Sync events from Google Calendar
-*/
+ * Sync events from Google Calendar
+ */
 async function syncFromCalendar(channelId, guildId, calendarFilter = null) {
   const result = await calendarService.syncEvents(168, calendarFilter);
   let postedCount = 0; // Track ONLY successfully posted events
@@ -168,6 +177,22 @@ async function syncFromCalendar(channelId, guildId, calendarFilter = null) {
   
   return result;
 }
+
+// ==========================================
+// GUILD NAME CAPTURE (FOR WEB UI)
+// ==========================================
+client.on('guildCreate', async (guild) => {
+  try {
+    // Save to events config
+    eventsConfig.setGuildName(guild.id, guild.name);
+    // Save to streaming config
+    streamingConfig.setGuildName(guild.id, guild.name);
+    console.log(`✅ Joined new guild: ${guild.name} (${guild.id})`);
+  } catch (error) {
+    console.error(`❌ Error saving guild name for ${guild.id}:`, error.message);
+  }
+});
+
 // Bot ready event
 client.once('ready', async () => {
   console.log('\n╔═══════════════════════════════════════════════════════╗');
@@ -198,7 +223,37 @@ client.once('ready', async () => {
 
   youtubeMonitor = new YouTubeMonitor(client, config, streamingConfig);
   youtubeMonitor.start();
+  
+  // ==========================================
+  // POPULATE GUILD NAMES FOR EXISTING SERVERS
+  // ==========================================
+  setTimeout(() => {
+    let updatedCount = 0;
+    client.guilds.cache.forEach(guild => {
+      try {
+        // Update events config
+        const eventsCfg = eventsConfig.getGuildConfig(guild.id);
+        if (!eventsCfg.guildName) {
+          eventsConfig.setGuildName(guild.id, guild.name);
+          updatedCount++;
+        }
+        
+        // Update streaming config
+        const streamingCfg = streamingConfig.getGuildConfig(guild.id);
+        if (!streamingCfg.guildName) {
+          streamingConfig.setGuildName(guild.id, guild.name);
+          updatedCount++;
+        }
+      } catch (err) {
+        console.warn(`⚠️ Failed to set name for guild ${guild.id}:`, err.message);
+      }
+    });
+    if (updatedCount > 0) {
+      console.log(`✅ Initialized guild names for ${client.guilds.cache.size} servers`);
+    }
+  }, 5000); // Delay to ensure configs are loaded
 });
+
 // Handle autocomplete
 client.on('interactionCreate', async interaction => {
   if (!interaction.isAutocomplete()) return;
@@ -214,6 +269,7 @@ client.on('interactionCreate', async interaction => {
     );
   }
 });
+
 // Handle slash commands
 client.on('interactionCreate', async interaction => {
   if (!interaction.isChatInputCommand()) return;
@@ -259,6 +315,7 @@ client.on('interactionCreate', async interaction => {
     }
   }
 });
+
 // Handle button interactions (for event signups)
 client.on('interactionCreate', async (interaction) => {
   if (!interaction.isButton()) return;
@@ -324,13 +381,12 @@ client.on('interactionCreate', async (interaction) => {
     await interaction.reply({ content: `❌ Error: ${error.message}`, ephemeral: true });
   }
 });
-// Handle guild removal
+
+// Handle guild removal (FIXED - removed invalid require)
 client.on('guildDelete', async (guild) => {
-  // Clean up configs using service methods only (no external require)
   try {
     // Clean up events config
     eventsConfig.deleteGuildConfig(guild.id);
-    
     // Clean up streaming config
     streamingConfig.deleteGuildConfig(guild.id);
     
@@ -339,12 +395,14 @@ client.on('guildDelete', async (guild) => {
     console.error(`❌ Error cleaning up configs for guild ${guild.id}:`, error);
   }
 });
+
 // Login
 client.login(config.discord.token).catch(error => {
   console.error('Failed to login:', error.message);
   console.log('\n⚠️  Please set your Discord bot token in the .env file');
   process.exit(1);
 });
+
 // Export for testing
 module.exports = {
   client,
