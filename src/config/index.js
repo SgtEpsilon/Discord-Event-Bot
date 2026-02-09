@@ -2,12 +2,12 @@
 require('dotenv').config();
 
 /**
-Parse calendar IDs from environment variable
-Supports formats:
-Single: "primary"
-Multiple with names: "Work:id1,Gaming:id2"
-Multiple without names: "id1,id2,id3"
-*/
+ * Parse calendar IDs from environment variable
+ * Supports formats:
+ *   Single: "primary"
+ *   Multiple with names: "Work:id1,Gaming:id2"
+ *   Multiple without names: "id1,id2,id3"
+ */
 function parseCalendarIds(calendarIdsString) {
   const calendars = [];
   const parts = calendarIdsString.split(',').map(s => s.trim()).filter(s => s);
@@ -40,22 +40,23 @@ const config = {
     calendarIds: process.env.CALENDAR_IDS || 'primary',
     calendars: parseCalendarIds(process.env.CALENDAR_IDS || 'primary')
   },
-
+  
   // Web server configuration
   web: {
-    port: process.env.WEB_PORT || 3000,
+    port: parseInt(process.env.WEB_PORT) || 3000,
     host: '0.0.0.0',
     apiKey: process.env.WEB_API_KEY || null  // API key for authentication
   },
-
-  // File paths
+  
+  // File paths - CRITICAL FIX: streaming.json NOT streaming-config.json
   files: {
     events: './data/events.json',
     presets: './data/presets.json',
     eventsConfig: './data/events-config.json',
-    streaming: './data/streaming-config.json'
+    streaming: './data/streaming.json',      // FIXED: Correct filename
+    guilds: './data/guilds.json'             // NEW: Guild list shared with web UI
   },
-
+  
   // Bot settings
   bot: {
     commandPrefix: '!',
@@ -78,8 +79,28 @@ function validateConfig() {
   return true;
 }
 
+// Validate web server configuration (optional warnings)
+function validateWebConfig() {
+  const warnings = [];
+  
+  if (!config.web.apiKey) {
+    warnings.push('WEB_API_KEY not set - web UI authentication will be disabled (development mode)');
+  }
+  
+  if (!config.google.credentials) {
+    warnings.push('GOOGLE_CREDENTIALS not set - calendar sync will be disabled');
+  }
+  
+  if (!config.twitch.clientId || !config.twitch.clientSecret) {
+    warnings.push('Twitch credentials not set - Twitch monitoring will be disabled');
+  }
+  
+  return warnings;
+}
+
 module.exports = {
   config,
   validateConfig,
+  validateWebConfig,
   parseCalendarIds
 };
