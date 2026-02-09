@@ -57,18 +57,16 @@ jspm_packages/
 .node_repl_history
 
 # ================================================
-# LOGS
+# PROJECT SPECIFIC
 # ================================================
-logs/
-*.log
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-lerna-debug.log*
-.pnpm-debug.log*
-
+# Custom user presets (if you want to keep them private)
+# Uncomment the line below if needed:
+# user-presets.json
 # Diagnostic reports
 report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
+# Backup files
+*.backup
+backup/
 
 # ================================================
 # OPERATING SYSTEM FILES
@@ -217,7 +215,6 @@ lib-cov
 
 # Gatsby files
 .cache/
-public/
 
 # SvelteKit
 .svelte-kit/
