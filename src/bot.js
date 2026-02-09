@@ -1,5 +1,5 @@
 // @src/bot.js
-const { Client, GatewayIntentBits, Partials, EmbedBuilder } = require('discord.js');
+const { Client, GatewayIntentBits, Partials, EmbedBuilder, ActivityType } = require('discord.js');
 const { token, ownerId, mongoUri } = require('./config.json');
 const mongoose = require('mongoose');
 const fs = require('fs');
@@ -11,7 +11,7 @@ const StreamingConfigManager = require('./config/streamingConfig');
 
 // Command handler
 const commands = new Map();
-const cooldowns = new Map();
+const cooldowns = new Map(); // Module-level cooldowns Map (NOT on client)
 
 // Initialize config managers
 const eventsConfig = new EventsConfig();
@@ -50,8 +50,8 @@ client.on('ready', async () => {
   console.log(`✅ Logged in as ${client.user.tag}!`);
   console.log(`✅ Serving ${client.guilds.cache.size} servers`);
   
-  // Set bot activity
-  client.user.setActivity('for /help', { type: 'WATCHING' });
+  // Set bot activity using v14 ActivityType enum
+  client.user.setActivity('for /help', { type: ActivityType.Watching });
   
   // ==========================================
   // POPULATE GUILD NAMES FOR EXISTING SERVERS (BATCHED SAVE)
@@ -62,11 +62,11 @@ client.on('ready', async () => {
 
   // Process all guilds immediately (no delay)
   client.guilds.cache.forEach(guild => {
-    // Events config
+    // Events config - updates in-memory only (no immediate persistence)
     try {
       const eventsCfg = eventsConfig.getGuildConfig(guild.id);
       if (!eventsCfg?.guildName) {
-        eventsConfig.setGuildName(guild.id, guild.name); // In-memory only
+        eventsConfig.setGuildName(guild.id, guild.name);
         eventsUpdated++;
       }
     } catch (err) {
@@ -74,11 +74,11 @@ client.on('ready', async () => {
       console.warn(`⚠️ Events config: Error processing guild ${guild.id}:`, err.message);
     }
 
-    // Streaming config
+    // Streaming config - updates in-memory only (no immediate persistence)
     try {
       const streamingCfg = streamingConfig.getGuildConfig(guild.id);
       if (!streamingCfg?.guildName) {
-        streamingConfig.setGuildName(guild.id, guild.name); // In-memory only
+        streamingConfig.setGuildName(guild.id, guild.name);
         streamingUpdated++;
       }
     } catch (err) {
@@ -87,7 +87,7 @@ client.on('ready', async () => {
     }
   });
 
-  // Batch persist all changes
+  // Batch persist all changes (single write per config service)
   try {
     if (eventsUpdated > 0) await eventsConfig.save();
     if (streamingUpdated > 0) await streamingConfig.save();
@@ -112,8 +112,7 @@ client.on('interactionCreate', async interaction => {
   const command = commands.get(interaction.commandName);
   if (!command) return;
 
-  // Cooldown handling
-  const { cooldowns } = client;
+  // Cooldown handling - use module-level cooldowns Map (NOT destructured from client)
   if (!cooldowns.has(command.data.name)) {
     cooldowns.set(command.data.name, new Map());
   }
