@@ -1,4 +1,4 @@
-// web-server.js - FIXED: Complete implementation with NO placeholder comments
+// web-server.js - Complete implementation with bidirectional sync
 const express = require('express');
 const path = require('path');
 const cors = require('cors');
@@ -6,8 +6,6 @@ const crypto = require('crypto');
 const fs = require('fs');
 const { exec } = require('child_process');
 require('dotenv').config();
-
-console.log('✅ WEB_API_KEY loaded from .env:', process.env.WEB_API_KEY ? 'YES' : 'NO');
 
 const { config } = require('./src/config/index');
 const EventManager = require('./src/services/eventManager');
@@ -51,9 +49,6 @@ const presetManager = new PresetManager(config.files.presets);
 const eventsConfig = new EventsConfig(config.files.eventsConfig || path.join(__dirname, 'data/events-config.json'));
 const streamingConfigPath = path.resolve(__dirname, config.files.streaming || 'data/streaming-config.json');
 const streamingConfig = new StreamingConfig(streamingConfigPath);
-
-console.log(`✅ Streaming config path: ${streamingConfigPath}`);
-console.log(`✅ File exists: ${fs.existsSync(streamingConfigPath) ? 'YES' : 'NO (will be created on first write)'}`);
 
 app.post('/api/verify-key', (req, res) => {
   const { apiKey } = req.body;
@@ -248,9 +243,15 @@ app.delete('/api/presets/:key', (req, res) => {
 
 app.post('/api/events/from-preset', async (req, res) => {
   try {
-    const { presetName, dateTime, description } = req.body;
+    const { presetName, dateTime, description, guildId, channelId } = req.body;
+    
     if (!presetName || !dateTime) {
       return res.status(400).json({ success: false, error: 'Preset name and dateTime are required' });
+    }
+    
+    // Validate guild/channel combination
+    if (guildId && !channelId) {
+      return res.status(400).json({ success: false, error: 'channelId required when guildId is provided' });
     }
     
     let parsedDate;
@@ -275,10 +276,23 @@ app.post('/api/events/from-preset', async (req, res) => {
     const preset = presetManager.getPreset(presetName);
     if (!preset) return res.status(404).json({ success: false, error: 'Preset not found' });
 
-    const event = await eventManager.createFromPreset(preset, parsedDate.toISOString(), description);
-    await eventManager.updateEvent(event.id, { createdBy: 'web_interface', channelId: null, guildId: null });
+    const event = await eventManager.createFromPreset(preset, parsedDate.toISOString(), {
+      customDescription: description,
+      createdBy: 'web_interface',
+      channelId: channelId || null,
+      guildId: guildId || null
+    });
 
-    res.json({ success: true, event: eventManager.getEvent(event.id) });
+    const willPostToDiscord = !!(guildId && channelId);
+
+    res.json({ 
+      success: true, 
+      event: eventManager.getEvent(event.id),
+      willPostToDiscord,
+      message: willPostToDiscord 
+        ? 'Event will be posted to Discord within 10 seconds' 
+        : 'Event created (web UI only)'
+    });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
@@ -308,6 +322,30 @@ app.get('/api/guilds', (req, res) => {
     const guilds = JSON.parse(fs.readFileSync(guildListPath, 'utf8'));
     const filtered = guilds.filter(g => !g.name.includes('(_comm)') && !g.name.includes('(_sche)'));
     res.json({ success: true, guilds: filtered });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.get('/api/guilds/:guildId/channels', (req, res) => {
+  try {
+    const channelListPath = path.join(__dirname, 'data', 'channels.json');
+    
+    if (!fs.existsSync(channelListPath)) {
+      return res.json({ 
+        success: true, 
+        channels: [],
+        warning: 'Channel list not available. Bot will generate on next startup.'
+      });
+    }
+    
+    const allChannels = JSON.parse(fs.readFileSync(channelListPath, 'utf8'));
+    const guildChannels = allChannels[req.params.guildId] || [];
+    
+    // Filter to text channels only (type 0 = GUILD_TEXT)
+    const textChannels = guildChannels.filter(ch => ch.type === 0);
+    
+    res.json({ success: true, channels: textChannels });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
@@ -661,13 +699,10 @@ app.listen(PORT, '0.0.0.0', () => {
     ? `🔒 API authentication: ENABLED` 
     : `⚠️ API authentication: DISABLED (set WEB_API_KEY in .env)`);
   
-  console.log(`\n💡 Critical paths:`);
-  console.log(`   Streaming config: ${streamingConfigPath}`);
-  console.log(`   Bot status file: ${path.join(__dirname, 'data', 'bot-status.json')}`);
-  console.log(`   Guild list: ${path.join(__dirname, 'data', 'guilds.json')}`);
-  console.log(`\n✅ Bot and web server now SHARE config files!`);
-  console.log(`✅ Bot status endpoint ACTIVE (reads from data/bot-status.json)`);
-  console.log(`✅ Bot restart uses PM2 (requires bot to be managed by PM2)\n`);
+  console.log(`\n💡 Features:`);
+  console.log(`   ✅ Bidirectional sync: Web ↔ Discord`);
+  console.log(`   ✅ Auto-posting: Events post to Discord in 10s`);
+  console.log(`   ✅ Channel selection: Per-event Discord targeting\n`);
 });
 
 function formatUptime(seconds) {

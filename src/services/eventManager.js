@@ -53,20 +53,44 @@ class EventManager {
     /**
      * Create event from preset
      */
-    async createFromPreset(preset, dateTime, customDescription = null) {
-        const parsedDateTime = parseDateTime(dateTime);
+    async createFromPreset(preset, dateTime, options = {}) {
+        let parsedDateTime;
         
-        if (!parsedDateTime) {
+        // Handle different date formats
+        if (dateTime instanceof Date) {
+            // Already a Date object
+            parsedDateTime = dateTime;
+        } else if (typeof dateTime === 'string') {
+            // Try parsing DD-MM-YYYY HH:MM format first
+            parsedDateTime = parseDateTime(dateTime);
+            
+            // If that fails, try parsing as ISO string or other standard formats
+            if (!parsedDateTime) {
+                parsedDateTime = new Date(dateTime);
+                if (isNaN(parsedDateTime.getTime())) {
+                    throw new Error('Invalid date format');
+                }
+            }
+        } else {
             throw new Error('Invalid date format');
         }
         
+        // Support both old signature (customDescription) and new signature (options object)
+        const customDescription = typeof options === 'string' ? options : options.customDescription;
+        const customTitle = typeof options === 'object' ? options.customTitle : undefined;
+        
         const eventData = {
-            title: preset.name,
+            title: customTitle || preset.name,
             description: customDescription || preset.description,
             dateTime: parsedDateTime.toISOString(),
             duration: preset.duration,
             maxParticipants: preset.maxParticipants,
-            roles: JSON.parse(JSON.stringify(preset.roles)) // Deep copy
+            roles: JSON.parse(JSON.stringify(preset.roles)), // Deep copy
+            ...(typeof options === 'object' && {
+                createdBy: options.createdBy,
+                channelId: options.channelId,
+                guildId: options.guildId
+            })
         };
         
         return await this.createEvent(eventData);
