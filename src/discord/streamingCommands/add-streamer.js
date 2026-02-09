@@ -8,10 +8,10 @@ module.exports = {
         .setDefaultMemberPermissions(PermissionFlagsBits.ManageChannels),
     
     async execute(interaction, context) {
-        const { streamingConfig } = context;
-        const guildConfig = streamingConfig.getGuildConfig(interaction.guildId);
+        const { guildConfig } = context;
+        const config = guildConfig.getGuildConfig(interaction.guildId);
         
-        if (!guildConfig.notificationChannelId) {
+        if (!config.notifications.channelId) {
             return interaction.reply({
                 content: '❌ Please set up a notification channel first with `/setup-streaming`',
                 ephemeral: true
@@ -62,19 +62,20 @@ module.exports = {
             }
             
             // Check if already added
-            if (guildConfig.twitch.streamers.includes(username)) {
+            const streamers = guildConfig.getTwitchStreamers(interaction.guildId);
+            if (streamers.includes(username)) {
                 return submitted.editReply(`❌ **${username}** is already being monitored!`);
             }
             
             // Validate with Twitch API if available
-            if (context.twitchMonitor && context.twitchMonitor.isEnabled()) {
+            if (context.twitchMonitor && context.twitchMonitor.isEnabled && context.twitchMonitor.isEnabled()) {
                 const isValid = await context.twitchMonitor.validateUsername(username);
                 if (!isValid) {
                     return submitted.editReply(`❌ Twitch user **${username}** does not exist or could not be found.`);
                 }
             }
             
-            streamingConfig.addTwitchStreamer(interaction.guildId, username, customMessage);
+            guildConfig.addTwitchStreamer(interaction.guildId, username, customMessage);
             
             let reply = `✅ Added **${username}** to monitoring!\n\nThe bot will check every minute if they go live.`;
             

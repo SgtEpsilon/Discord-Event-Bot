@@ -15,10 +15,10 @@ module.exports = {
         ),
     
     async execute(interaction, context) {
-        const { streamingConfig } = context;
+        const { guildConfig } = context;
         const channel = interaction.options.getChannel('channel');
         
-        streamingConfig.setNotificationChannel(interaction.guildId, channel.id);
+        guildConfig.setNotificationChannel(interaction.guildId, channel.id);
         
         await interaction.reply({
             content: `✅ Stream and video notifications will be sent to ${channel}\n\nNext steps:\n• Add Twitch streamers: \`/add-streamer\`\n• Add YouTube channels: \`/add-youtube\``,

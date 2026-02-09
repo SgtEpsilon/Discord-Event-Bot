@@ -7,10 +7,10 @@ module.exports = {
         .setDescription('Show all monitored Twitch streamers'),
     
     async execute(interaction, context) {
-        const { streamingConfig } = context;
-        const guildConfig = streamingConfig.getGuildConfig(interaction.guildId);
+        const { guildConfig } = context;
+        const config = guildConfig.getGuildConfig(interaction.guildId);
         
-        if (!guildConfig.twitch.streamers || guildConfig.twitch.streamers.length === 0) {
+        if (!config.twitch.streamers || config.twitch.streamers.length === 0) {
             return interaction.reply({
                 content: '📋 No Twitch streamers are currently being monitored.\n\nAdd one with `/add-streamer`',
                 ephemeral: true
@@ -20,11 +20,11 @@ module.exports = {
         const embed = new EmbedBuilder()
             .setColor('#9146FF')
             .setTitle('🎮 Monitored Twitch Streamers')
-            .setDescription(`Total: ${guildConfig.twitch.streamers.length} streamer(s)`)
+            .setDescription(`Total: ${config.twitch.streamers.length} streamer(s)`)
             .setTimestamp();
         
-        const streamerList = guildConfig.twitch.streamers.map((username, index) => {
-            const hasCustom = guildConfig.twitch.customMessages && guildConfig.twitch.customMessages[username];
+        const streamerList = config.twitch.streamers.map((username, index) => {
+            const hasCustom = config.twitch.customMessages && config.twitch.customMessages[username];
             return `${index + 1}. **${username}** ${hasCustom ? '✨ (Custom notification)' : ''}`;
         }).join('\n');
         
@@ -34,10 +34,10 @@ module.exports = {
             inline: false
         });
         
-        if (guildConfig.notificationChannelId) {
+        if (config.notifications.channelId) {
             embed.addFields({
                 name: 'Notification Channel',
-                value: `<#${guildConfig.notificationChannelId}>`,
+                value: `<#${config.notifications.channelId}>`,
                 inline: false
             });
         }

@@ -1,114 +1,73 @@
-// web-server.js
+// web-server.js - Updated for Unified Guild Configuration
 const express = require('express');
 const path = require('path');
-const cors = require('cors');
-require('dotenv').config();
-const crypto = require('crypto'); // For timing-safe comparisons
-const { config } = require('./src/config');
-const EventManager = require('./src/services/eventManager');
-const PresetManager = require('./src/services/presetManager');
-const CalendarService = require('./src/services/calendar');
-const EventsConfig = require('./src/services/eventsConfig');
-const StreamingConfigManager = require('./src/services/streamingConfig'); // Fixed path
+const config = require('./src/config');
+const GuildConfigManager = require('./src/services/guildConfigManager');
+
 const app = express();
 const PORT = process.env.WEB_PORT || 3000;
 
 // Middleware
-app.use(cors());
 app.use(express.json());
-app.use(express.static(path.join(__dirname, 'public')));
+app.use(express.static('public'));
 
-// ==========================================
-// INITIALIZE SHARED SERVICES
-// ==========================================
-const calendarService = new CalendarService(
-    config.google.credentials,
-    config.google.calendars
-);
-const eventManager = new EventManager(config.files.events, calendarService);
-const presetManager = new PresetManager(config.files.presets);
-const eventsConfig = new EventsConfig(
-    config.files.eventsConfig || path.join(__dirname, 'data/events-config.json')
-);
-const streamingConfig = new StreamingConfigManager(
-    config.files.streaming || path.join(__dirname, 'data/streaming-config.json')
+// Initialize unified guild config
+const guildConfig = new GuildConfigManager(
+    config.files.guildConfig || path.join(__dirname, 'data/guild-config.json')
 );
 
-// ==========================================
-// AUTHENTICATION MIDDLEWARE
-// ==========================================
-function verifyApiKey() {
-    const validApiKey = process.env.WEB_API_KEY || config.web?.apiKey;
+// Simple API key verification middleware
+const verifyApiKey = () => {
     return (req, res, next) => {
-        if (!validApiKey) {
-            console.warn('[Auth] No API key configured - allowing unauthenticated access');
-            return next();
-        }
-        const apiKey = req.headers['x-api-key'] || req.headers['authorization']?.replace('Bearer ', '');
+        const apiKey = req.headers['x-api-key'];
+        const configuredKey = process.env.WEB_API_KEY || config.web?.apiKey;
         
-        if (!apiKey) {
-            return res.status(401).json({ 
-                success: false, 
-                error: 'Missing authentication. Please provide X-API-Key header' 
+        if (configuredKey && apiKey !== configuredKey) {
+            return res.status(401).json({
+                success: false,
+                error: 'Invalid or missing API key'
             });
         }
-        
-        // Timing-safe comparison using crypto.timingSafeEqual
-        const validBuf = Buffer.from(validApiKey);
-        const inputBuf = Buffer.from(apiKey);
-        
-        // Always compare buffers of equal length to prevent timing leaks
-        let result;
-        if (inputBuf.length !== validBuf.length) {
-            const dummy = Buffer.alloc(validBuf.length);
-            result = crypto.timingSafeEqual(validBuf, dummy);
-        } else {
-            result = crypto.timingSafeEqual(validBuf, inputBuf);
-        }
-        
-        if (!result) {
-            return res.status(401).json({ 
-                success: false, 
-                error: 'Invalid API key' 
-            });
-        }
-        
         next();
     };
-}
+};
 
 // ==========================================
-// PUBLIC ROUTES
+// API ENDPOINTS
 // ==========================================
+
+// Health check
 app.get('/api/health', (req, res) => {
     res.json({
         success: true,
-        status: 'healthy',
-        timestamp: new Date().toISOString(),
-        authRequired: !!(process.env.WEB_API_KEY || config.web?.apiKey)
+        message: 'Web server is running',
+        timestamp: new Date().toISOString()
     });
 });
 
-// ==========================================
-// PROTECTED ROUTES
-// ==========================================
-app.use('/api', verifyApiKey());
-
-// Get all guilds with streaming config (uses shared instance)
+// Get all guilds with their configurations
 app.get('/api/guilds', (req, res) => {
     try {
-        const guildConfigs = streamingConfig.getAllGuildConfigs(); // ✅ FIXED: Changed from getAllConfigs()
+        const guildConfigs = guildConfig.getAllGuildConfigs();
         const guilds = Object.entries(guildConfigs).map(([guildId, config]) => ({
             id: guildId,
             name: config.guildName || 'Unknown Guild',
-            enabled: config.enabled || false,
-            channels: config.channels || [],
-            activeStreams: config.activeStreams || []
+            eventChannel: config.eventChannel?.channelId || null,
+            eventChannelEnabled: config.eventChannel?.enabled || false,
+            notificationChannel: config.notifications?.channelId || null,
+            notificationChannelEnabled: config.notifications?.enabled || false,
+            twitchEnabled: config.twitch?.enabled || false,
+            twitchStreamers: config.twitch?.streamers?.length || 0,
+            youtubeEnabled: config.youtube?.enabled || false,
+            youtubeChannels: config.youtube?.channels?.length || 0,
+            createdAt: config.createdAt,
+            updatedAt: config.updatedAt
         }));
         
         res.json({
             success: true,
-            guilds
+            guilds,
+            total: guilds.length
         });
     } catch (error) {
         console.error('[API] Error fetching guilds:', error);
@@ -119,199 +78,63 @@ app.get('/api/guilds', (req, res) => {
     }
 });
 
-// Get bot statistics - FIXED: Use eventManager.getStats() instead of non-existent methods
-app.get('/api/stats', (req, res) => {
+// Get complete guild configuration
+app.get('/api/guild-config/:guildId', (req, res) => {
     try {
-        // Get event statistics from eventManager
-        const eventStats = eventManager.getStats();
-        // Merge with preset count
-        const stats = {
-            ...eventStats,
-            totalPresets: presetManager.getPresetCount()
-        };
-        res.json({ success: true, stats });
-    } catch (error) {
-        res.status(500).json({ success: false, error: error.message });
-    }
-});
-
-// Get all events (no guildId filter)
-app.get('/api/events', (req, res) => {
-    try {
-        const events = eventManager.getAllEvents();
-        const eventList = Object.values(events).map(event => ({
-            ...event,
-            signupCount: Object.values(event.signups || {}).reduce((sum, arr) => sum + arr.length, 0)
-        }));
-        res.json({ success: true, events: eventList });
-    } catch (error) {
-        res.status(500).json({ success: false, error: error.message });
-    }
-});
-
-// Get single event
-app.get('/api/events/:eventId', (req, res) => {
-    try {
-        const event = eventManager.getEvent(req.params.eventId);
-        if (!event) {
-            return res.status(404).json({ success: false, error: 'Event not found' });
-        }
-        res.json({ success: true, event });
-    } catch (error) {
-        res.status(500).json({ success: false, error: error.message });
-    }
-});
-
-// Create new event
-app.post('/api/events', async (req, res) => {
-    try {
-        const { title, description, dateTime, duration, maxParticipants, roles } = req.body;
-        if (!title || !dateTime) {
-            return res.status(400).json({ 
-                success: false, 
-                error: 'Title and dateTime are required' 
-            });
-        }
-        
-        // Validate dateTime
-        const parsedDate = new Date(dateTime);
-        if (isNaN(parsedDate.getTime())) {
-            return res.status(400).json({ 
-                success: false, 
-                error: `Invalid dateTime format: "${dateTime}"` 
-            });
-        }
-        
-        const event = await eventManager.createEvent({
-            title,
-            description: description || '',
-            dateTime: parsedDate.toISOString(),
-            duration: parseInt(duration) || 60,
-            maxParticipants: parseInt(maxParticipants) || 0,
-            roles: roles || [],
-            createdBy: 'web_interface'
+        const config = guildConfig.getGuildConfig(req.params.guildId);
+        res.json({ 
+            success: true, 
+            config 
         });
+    } catch (error) {
+        res.status(500).json({ 
+            success: false, 
+            error: error.message 
+        });
+    }
+});
+
+// Bulk update guild configuration
+app.put('/api/guild-config/:guildId', (req, res) => {
+    try {
+        const guildId = req.params.guildId;
+        const updates = req.body;
         
-        res.json({ success: true, event });
-    } catch (error) {
-        res.status(500).json({ success: false, error: error.message });
-    }
-});
-
-// Delete event
-app.delete('/api/events/:eventId', (req, res) => {
-    try {
-        const event = eventManager.getEvent(req.params.eventId);
-        if (!event) {
-            return res.status(404).json({ success: false, error: 'Event not found' });
-        }
-        eventManager.deleteEvent(req.params.eventId);
-        res.json({ success: true, message: 'Event deleted successfully' });
-    } catch (error) {
-        res.status(500).json({ success: false, error: error.message });
-    }
-});
-
-// Get all presets (no guildId filter)
-app.get('/api/presets', (req, res) => {
-    try {
-        const presets = presetManager.loadPresets();
-        res.json({ success: true, presets });
-    } catch (error) {
-        res.status(500).json({ success: false, error: error.message });
-    }
-});
-
-// Create new preset
-app.post('/api/presets', (req, res) => {
-    try {
-        const { key, name, description, duration, maxParticipants, roles } = req.body;
-        if (!key || !name) {
+        // Validate updates object
+        if (!updates || typeof updates !== 'object') {
             return res.status(400).json({
                 success: false,
-                error: 'Key and name are required'
+                error: 'Invalid updates object'
             });
         }
         
-        // Validate key format
-        if (!/^[a-z0-9-]+$/.test(key)) {
-            return res.status(400).json({ 
-                success: false, 
-                error: 'Key must be lowercase letters, numbers, and hyphens only' 
-            });
-        }
+        const config = guildConfig.updateGuildConfig(guildId, updates);
         
-        const preset = presetManager.createPreset(key, {
-            name,
-            description: description || '',
-            duration: parseInt(duration) || 60,
-            maxParticipants: parseInt(maxParticipants) || 0,
-            roles: roles || []
+        res.json({
+            success: true,
+            message: 'Guild configuration updated successfully',
+            config
         });
-        
-        res.json({ success: true, preset, key });
     } catch (error) {
-        res.status(500).json({ success: false, error: error.message });
+        console.error('[API] Error updating guild config:', error);
+        res.status(500).json({ 
+            success: false, 
+            error: error.message 
+        });
     }
 });
 
-// Delete preset
-app.delete('/api/presets/:presetKey', (req, res) => {
-    try {
-        const preset = presetManager.getPreset(req.params.presetKey);
-        if (!preset) {
-            return res.status(404).json({ success: false, error: 'Preset not found' });
-        }
-        presetManager.deletePreset(req.params.presetKey);
-        res.json({ success: true, message: 'Preset deleted successfully' });
-    } catch (error) {
-        res.status(500).json({ success: false, error: error.message });
-    }
-});
+// ==========================================
+// EVENT CHANNEL ENDPOINTS
+// ==========================================
 
-// Create event from preset
-app.post('/api/events/from-preset', async (req, res) => {
-    try {
-        const { presetName, dateTime, description } = req.body;
-        if (!presetName || !dateTime) {
-            return res.status(400).json({
-                success: false,
-                error: 'Preset name and dateTime are required'
-            });
-        }
-        
-        // Validate dateTime
-        const parsedDate = new Date(dateTime);
-        if (isNaN(parsedDate.getTime())) {
-            return res.status(400).json({ 
-                success: false, 
-                error: `Invalid dateTime format: "${dateTime}"` 
-            });
-        }
-        
-        const preset = presetManager.getPreset(presetName);
-        if (!preset) {
-            return res.status(404).json({ success: false, error: 'Preset not found' });
-        }
-        
-        const event = await eventManager.createFromPreset(
-            preset,
-            parsedDate.toISOString(),
-            description
-        );
-        
-        res.json({ success: true, event });
-    } catch (error) {
-        res.status(500).json({ success: false, error: error.message });
-    }
-});
-
-// Get event channel configuration for a guild
+// Get event channel for a guild
 app.get('/api/event-channel/:guildId', (req, res) => {
     try {
         const guildId = req.params.guildId;
-        const channelId = eventsConfig.getEventChannel(guildId);
-        const hasChannel = eventsConfig.hasEventChannel(guildId);
+        const channelId = guildConfig.getEventChannel(guildId);
+        const hasChannel = guildConfig.hasEventChannel(guildId);
+        
         res.json({
             success: true,
             guildId,
@@ -319,7 +142,10 @@ app.get('/api/event-channel/:guildId', (req, res) => {
             hasChannel
         });
     } catch (error) {
-        res.status(500).json({ success: false, error: error.message });
+        res.status(500).json({ 
+            success: false, 
+            error: error.message 
+        });
     }
 });
 
@@ -328,6 +154,7 @@ app.post('/api/event-channel/:guildId', (req, res) => {
     try {
         const guildId = req.params.guildId;
         const { channelId } = req.body;
+        
         if (!channelId) {
             return res.status(400).json({
                 success: false,
@@ -335,15 +162,21 @@ app.post('/api/event-channel/:guildId', (req, res) => {
             });
         }
         
-        const config = eventsConfig.setEventChannel(guildId, channelId);
+        const config = guildConfig.setEventChannel(guildId, channelId);
         
         res.json({ 
             success: true, 
             message: 'Event channel set successfully',
+            guildId,
+            channelId,
             config
         });
     } catch (error) {
-        res.status(500).json({ success: false, error: error.message });
+        console.error('[API] Error setting event channel:', error);
+        res.status(500).json({ 
+            success: false, 
+            error: error.message 
+        });
     }
 });
 
@@ -351,81 +184,26 @@ app.post('/api/event-channel/:guildId', (req, res) => {
 app.delete('/api/event-channel/:guildId', (req, res) => {
     try {
         const guildId = req.params.guildId;
-        const config = eventsConfig.removeEventChannel(guildId);
+        const config = guildConfig.removeEventChannel(guildId);
+        
         res.json({
             success: true,
             message: 'Event channel cleared successfully',
+            guildId,
             config
         });
     } catch (error) {
-        res.status(500).json({ success: false, error: error.message });
+        console.error('[API] Error clearing event channel:', error);
+        res.status(500).json({ 
+            success: false, 
+            error: error.message 
+        });
     }
 });
 
 // ==========================================
-// STREAMING CONFIG ENDPOINTS - ADDED: Missing Twitch/YouTube/Notification handlers
+// NOTIFICATION CHANNEL ENDPOINTS
 // ==========================================
-// Save Twitch configuration for a guild
-app.post('/api/twitch/:guildId', (req, res) => {
-    try {
-        const guildId = req.params.guildId;
-        const { streamers, enabled } = req.body;
-        if (!streamers || !Array.isArray(streamers)) {
-            return res.status(400).json({
-                success: false,
-                error: 'streamers array is required'
-            });
-        }
-        
-        // Call streamingConfig method to save Twitch config
-        streamingConfig.enableTwitch(guildId, {
-            streamers,
-            enabled: enabled !== false // Default to true if not specified
-        });
-        
-        res.json({
-            success: true,
-            message: 'Twitch configuration saved successfully',
-            guildId,
-            streamers,
-            enabled: enabled !== false
-        });
-    } catch (error) {
-        console.error('[API] Error saving Twitch config:', error);
-        res.status(500).json({ success: false, error: error.message });
-    }
-});
-
-// Save YouTube configuration for a guild
-app.post('/api/youtube/:guildId', (req, res) => {
-    try {
-        const guildId = req.params.guildId;
-        const { channels, enabled } = req.body;
-        if (!channels || !Array.isArray(channels)) {
-            return res.status(400).json({
-                success: false,
-                error: 'channels array is required'
-            });
-        }
-        
-        // Call streamingConfig method to save YouTube config
-        streamingConfig.enableYouTube(guildId, {
-            channels,
-            enabled: enabled !== false // Default to true if not specified
-        });
-        
-        res.json({
-            success: true,
-            message: 'YouTube configuration saved successfully',
-            guildId,
-            channels,
-            enabled: enabled !== false
-        });
-    } catch (error) {
-        console.error('[API] Error saving YouTube config:', error);
-        res.status(500).json({ success: false, error: error.message });
-    }
-});
 
 // Set notification channel for streaming alerts
 app.post('/api/notification-channel/:guildId', (req, res) => {
@@ -440,8 +218,7 @@ app.post('/api/notification-channel/:guildId', (req, res) => {
             });
         }
         
-        // Call streamingConfig to set notification channel
-        streamingConfig.setNotificationChannel(guildId, channelId);
+        guildConfig.setNotificationChannel(guildId, channelId);
         
         res.json({
             success: true,
@@ -450,7 +227,29 @@ app.post('/api/notification-channel/:guildId', (req, res) => {
             channelId
         });
     } catch (error) {
-        console.error('[API] Error saving notification channel:', error);
+        console.error('[API] Error setting notification channel:', error);
+        res.status(500).json({ 
+            success: false, 
+            error: error.message 
+        });
+    }
+});
+
+// Get notification channel for a guild
+app.get('/api/notification-channel/:guildId', (req, res) => {
+    try {
+        const guildId = req.params.guildId;
+        const config = guildConfig.getGuildConfig(guildId);
+        const channelId = config.notifications?.channelId || null;
+        const enabled = config.notifications?.enabled || false;
+        
+        res.json({
+            success: true,
+            guildId,
+            channelId,
+            enabled
+        });
+    } catch (error) {
         res.status(500).json({ 
             success: false, 
             error: error.message 
@@ -459,65 +258,348 @@ app.post('/api/notification-channel/:guildId', (req, res) => {
 });
 
 // ==========================================
-// CATCH-ALL FOR API (MUST BE LAST!)
+// TWITCH ENDPOINTS
 // ==========================================
-app.use('/api', (req, res) => {
+
+// Get Twitch configuration for a guild
+app.get('/api/twitch/:guildId', (req, res) => {
+    try {
+        const guildId = req.params.guildId;
+        const streamers = guildConfig.getTwitchStreamers(guildId);
+        const config = guildConfig.getGuildConfig(guildId);
+        
+        res.json({
+            success: true,
+            guildId,
+            streamers,
+            enabled: config.twitch?.enabled || false,
+            customMessages: config.twitch?.customMessages || {}
+        });
+    } catch (error) {
+        console.error('[API] Error fetching Twitch config:', error);
+        res.status(500).json({ 
+            success: false, 
+            error: error.message 
+        });
+    }
+});
+
+// Update Twitch configuration for a guild
+app.post('/api/twitch/:guildId', (req, res) => {
+    try {
+        const guildId = req.params.guildId;
+        const { streamers, enabled } = req.body;
+        
+        if (!streamers || !Array.isArray(streamers)) {
+            return res.status(400).json({
+                success: false,
+                error: 'streamers array is required'
+            });
+        }
+        
+        // Get current config
+        const config = guildConfig.getGuildConfig(guildId);
+        
+        // Clear existing streamers
+        config.twitch.streamers = [];
+        config.twitch.customMessages = {};
+        
+        // Add new streamers
+        for (const streamer of streamers) {
+            if (typeof streamer === 'string') {
+                guildConfig.addTwitchStreamer(guildId, streamer);
+            } else if (streamer.username) {
+                guildConfig.addTwitchStreamer(guildId, streamer.username, streamer.customMessage);
+            }
+        }
+        
+        // Update enabled status if provided
+        if (typeof enabled === 'boolean') {
+            config.twitch.enabled = enabled;
+            guildConfig.updateGuildConfig(guildId, { twitch: config.twitch });
+        }
+        
+        res.json({
+            success: true,
+            message: 'Twitch configuration saved successfully',
+            guildId,
+            streamers: config.twitch.streamers,
+            enabled: config.twitch.enabled
+        });
+    } catch (error) {
+        console.error('[API] Error saving Twitch config:', error);
+        res.status(500).json({ 
+            success: false, 
+            error: error.message 
+        });
+    }
+});
+
+// Add a single Twitch streamer
+app.post('/api/twitch/:guildId/streamer', (req, res) => {
+    try {
+        const guildId = req.params.guildId;
+        const { username, customMessage } = req.body;
+        
+        if (!username) {
+            return res.status(400).json({
+                success: false,
+                error: 'username is required'
+            });
+        }
+        
+        guildConfig.addTwitchStreamer(guildId, username, customMessage);
+        
+        res.json({
+            success: true,
+            message: `Added Twitch streamer: ${username}`,
+            guildId,
+            username,
+            customMessage
+        });
+    } catch (error) {
+        console.error('[API] Error adding Twitch streamer:', error);
+        res.status(500).json({ 
+            success: false, 
+            error: error.message 
+        });
+    }
+});
+
+// Remove a Twitch streamer
+app.delete('/api/twitch/:guildId/streamer/:username', (req, res) => {
+    try {
+        const guildId = req.params.guildId;
+        const username = req.params.username.toLowerCase();
+        
+        guildConfig.removeTwitchStreamer(guildId, username);
+        
+        res.json({
+            success: true,
+            message: `Removed Twitch streamer: ${username}`,
+            guildId,
+            username
+        });
+    } catch (error) {
+        console.error('[API] Error removing Twitch streamer:', error);
+        res.status(500).json({ 
+            success: false, 
+            error: error.message 
+        });
+    }
+});
+
+// ==========================================
+// YOUTUBE ENDPOINTS
+// ==========================================
+
+// Get YouTube configuration for a guild
+app.get('/api/youtube/:guildId', (req, res) => {
+    try {
+        const guildId = req.params.guildId;
+        const channels = guildConfig.getYouTubeChannels(guildId);
+        const config = guildConfig.getGuildConfig(guildId);
+        
+        res.json({
+            success: true,
+            guildId,
+            channels,
+            enabled: config.youtube?.enabled || false
+        });
+    } catch (error) {
+        console.error('[API] Error fetching YouTube config:', error);
+        res.status(500).json({ 
+            success: false, 
+            error: error.message 
+        });
+    }
+});
+
+// Update YouTube configuration for a guild
+app.post('/api/youtube/:guildId', (req, res) => {
+    try {
+        const guildId = req.params.guildId;
+        const { channels, enabled } = req.body;
+        
+        if (!channels || !Array.isArray(channels)) {
+            return res.status(400).json({
+                success: false,
+                error: 'channels array is required'
+            });
+        }
+        
+        // Get current config
+        const config = guildConfig.getGuildConfig(guildId);
+        
+        // Clear existing channels
+        config.youtube.channels = [];
+        
+        // Add new channels
+        for (const channel of channels) {
+            guildConfig.addYouTubeChannel(guildId, channel);
+        }
+        
+        // Update enabled status if provided
+        if (typeof enabled === 'boolean') {
+            config.youtube.enabled = enabled;
+            guildConfig.updateGuildConfig(guildId, { youtube: config.youtube });
+        }
+        
+        res.json({
+            success: true,
+            message: 'YouTube configuration saved successfully',
+            guildId,
+            channels: config.youtube.channels,
+            enabled: config.youtube.enabled
+        });
+    } catch (error) {
+        console.error('[API] Error saving YouTube config:', error);
+        res.status(500).json({ 
+            success: false, 
+            error: error.message 
+        });
+    }
+});
+
+// Add a single YouTube channel
+app.post('/api/youtube/:guildId/channel', (req, res) => {
+    try {
+        const guildId = req.params.guildId;
+        const { channelId } = req.body;
+        
+        if (!channelId) {
+            return res.status(400).json({
+                success: false,
+                error: 'channelId is required'
+            });
+        }
+        
+        guildConfig.addYouTubeChannel(guildId, channelId);
+        
+        res.json({
+            success: true,
+            message: `Added YouTube channel: ${channelId}`,
+            guildId,
+            channelId
+        });
+    } catch (error) {
+        console.error('[API] Error adding YouTube channel:', error);
+        res.status(500).json({ 
+            success: false, 
+            error: error.message 
+        });
+    }
+});
+
+// Remove a YouTube channel
+app.delete('/api/youtube/:guildId/channel/:channelId', (req, res) => {
+    try {
+        const guildId = req.params.guildId;
+        const channelId = req.params.channelId;
+        
+        guildConfig.removeYouTubeChannel(guildId, channelId);
+        
+        res.json({
+            success: true,
+            message: `Removed YouTube channel: ${channelId}`,
+            guildId,
+            channelId
+        });
+    } catch (error) {
+        console.error('[API] Error removing YouTube channel:', error);
+        res.status(500).json({ 
+            success: false, 
+            error: error.message 
+        });
+    }
+});
+
+// ==========================================
+// STATISTICS AND UTILITY ENDPOINTS
+// ==========================================
+
+// Get guild statistics
+app.get('/api/stats', (req, res) => {
+    try {
+        const stats = guildConfig.getStats();
+        res.json({
+            success: true,
+            stats
+        });
+    } catch (error) {
+        console.error('[API] Error fetching stats:', error);
+        res.status(500).json({ 
+            success: false, 
+            error: error.message 
+        });
+    }
+});
+
+// Clean up inactive guilds (requires API key)
+app.post('/api/cleanup', verifyApiKey(), (req, res) => {
+    try {
+        const { retentionDays } = req.body;
+        const days = retentionDays || 30;
+        
+        const result = guildConfig.cleanupInactiveGuilds(days);
+        
+        res.json({
+            success: true,
+            message: `Cleanup completed`,
+            ...result
+        });
+    } catch (error) {
+        console.error('[API] Error during cleanup:', error);
+        res.status(500).json({ 
+            success: false, 
+            error: error.message 
+        });
+    }
+});
+
+// ==========================================
+// SERVE HTML PAGES
+// ==========================================
+
+// Main dashboard
+app.get('/', (req, res) => {
+    res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
+
+// Guild configuration page
+app.get('/guild/:guildId', (req, res) => {
+    res.sendFile(path.join(__dirname, 'public', 'guild.html'));
+});
+
+// ==========================================
+// ERROR HANDLING
+// ==========================================
+
+// 404 handler
+app.use((req, res) => {
     res.status(404).json({
         success: false,
-        error: `API endpoint not found: ${req.method} ${req.url}`
+        error: 'Endpoint not found'
     });
 });
 
-// Global error handler for API
-app.use('/api', (err, req, res, next) => {
-    console.error('[API] Unhandled error:', err);
+// Global error handler
+app.use((error, req, res, next) => {
+    console.error('[Server] Error:', error);
     res.status(500).json({
         success: false,
-        error: err.message || 'Internal server error'
+        error: 'Internal server error'
     });
-});
-
-// Serve web UI
-app.get('*', (req, res) => {
-    if (!req.path.startsWith('/api')) {
-        return res.sendFile(path.join(__dirname, 'public', 'index.html'));
-    }
-    res.status(404).send('Not found');
 });
 
 // ==========================================
 // START SERVER
 // ==========================================
-app.listen(PORT, '0.0.0.0', () => {
-    const os = require('os');
-    const localIP = Object.values(os.networkInterfaces())
-        .flat()
-        .find(iface => iface.family === 'IPv4' && !iface.internal)?.address || 'localhost';
-    
-    console.log( `\n🌐 Web Interface Started Successfully!` );
-    console.log( `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━` );
-    console.log( `📍 Local: http://localhost:${PORT}` );
-    console.log( `📱 Network: http://${localIP}:${PORT}` );
-    console.log( `✅ API Endpoints:` );
-    console.log( `• /api/health (public)` );
-    console.log( `• /api/stats (protected)` );
-    console.log( `• /api/guilds (protected)` );
-    console.log( `• /api/events, /api/presets (protected)` );
-    console.log( `• /api/events/from-preset (protected)` );
-    console.log( `• /api/event-channel/:guildId (protected)` );
-    console.log( `• /api/twitch/:guildId (protected) ← NEW!` );
-    console.log( `• /api/youtube/:guildId (protected) ← NEW!` );
-    console.log( `• /api/notification-channel/:guildId (protected) ← NEW!` );
-    console.log( `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━` );
-    
-    const apiKeyConfigured = process.env.WEB_API_KEY || config.web?.apiKey;
-    if (apiKeyConfigured) {
-        console.log(`🔒 API authentication: ENABLED`);
-    } else {
-        console.log(`⚠️ API authentication: DISABLED (set WEB_API_KEY in .env)`);
-    }
-    
-    console.log(`\n💡 Access web UI at: http://${localIP}:${PORT}\n`);
+
+app.listen(PORT, () => {
+    console.log(`[Web Server] 🌐 Running on http://localhost:${PORT}`);
+    console.log(`[Web Server] 📊 Dashboard: http://localhost:${PORT}`);
+    console.log(`[Web Server] 🔧 API: http://localhost:${PORT}/api/guilds`);
 });
 
 module.exports = app;

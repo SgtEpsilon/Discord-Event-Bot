@@ -6,10 +6,10 @@ const util = require('util');
 const parseXML = util.promisify(parseString);
 
 class YouTubeMonitor {
-    constructor(client, config, streamingConfigManager) {
+    constructor(client, config, guildConfig) {
         this.client = client;
         this.config = config;
-        this.streamingConfig = streamingConfigManager;
+        this.guildConfig = guildConfig;  // Changed from streamingConfig to guildConfig
         this.lastVideoIds = new Map(); // guildId -> channelId -> videoId
         this.checkInterval = null;
     }
@@ -18,10 +18,10 @@ class YouTubeMonitor {
      * Check all monitored YouTube channels
      */
     async checkVideos() {
-        const allConfigs = this.streamingConfig.getAllGuildConfigs();
+        const allConfigs = this.guildConfig.getAllGuildConfigs();
         
-        for (const [guildId, guildConfig] of Object.entries(allConfigs)) {
-            if (!guildConfig.youtube.enabled || !guildConfig.notificationChannelId) {
+        for (const [guildId, config] of Object.entries(allConfigs)) {
+            if (!config.youtube?.enabled || !config.notifications?.channelId) {
                 continue;
             }
             
@@ -31,7 +31,7 @@ class YouTubeMonitor {
             
             const guildLastVideoIds = this.lastVideoIds.get(guildId);
             
-            for (const channelId of guildConfig.youtube.channels) {
+            for (const channelId of (config.youtube.channels || [])) {
                 try {
                     const rssUrl = `https://www.youtube.com/feeds/videos.xml?channel_id=${channelId}`;
                     const response = await axios.get(rssUrl, { timeout: 5000 });
@@ -59,7 +59,7 @@ class YouTubeMonitor {
                                 snippet: { title, channelTitle, publishedAt }
                             };
                             
-                            await this.sendNotification(videoData, guildId, guildConfig);
+                            await this.sendNotification(videoData, guildId, config);
                             console.log(`[YouTube] New video from ${channelTitle}: ${title}`);
                         }
                     }
@@ -73,12 +73,12 @@ class YouTubeMonitor {
     /**
      * Send video notification
      */
-    async sendNotification(video, guildId, guildConfig) {
+    async sendNotification(video, guildId, config) {
         try {
-            const channel = await this.client.channels.fetch(guildConfig.notificationChannelId);
+            const channel = await this.client.channels.fetch(config.notifications.channelId);
             if (!channel) return;
             
-            const message = guildConfig.youtube.message
+            const message = '📺 {channel} uploaded a new video!\n**{title}**'
                 .replace(/{channel}/g, video.snippet.channelTitle)
                 .replace(/{title}/g, video.snippet.title);
             
@@ -234,7 +234,7 @@ class YouTubeMonitor {
     start() {
         console.log('[YouTube] Starting YouTube monitor (RSS-based, no API quota)...');
         this.checkVideos();
-        this.checkInterval = setInterval(() => this.checkVideos(), this.config.bot.youtubeCheckInterval);
+        this.checkInterval = setInterval(() => this.checkVideos(), this.config.bot?.youtubeCheckInterval || 300000);
         console.log('[YouTube] Monitor started (checking every 5 minutes)');
     }
     
@@ -253,7 +253,7 @@ class YouTubeMonitor {
      * Check if enabled
      */
     isEnabled() {
-        return this.config.youtube.enabled;
+        return this.config.youtube?.enabled !== false;
     }
 }
 

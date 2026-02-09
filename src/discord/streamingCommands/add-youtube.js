@@ -14,12 +14,12 @@ module.exports = {
         ),
     
     async execute(interaction, context) {
-        const { streamingConfig, youtubeMonitor } = context;
+        const { guildConfig, youtubeMonitor } = context;
         const input = interaction.options.getString('channel').trim();
         
-        const guildConfig = streamingConfig.getGuildConfig(interaction.guildId);
+        const config = guildConfig.getGuildConfig(interaction.guildId);
         
-        if (!guildConfig.notificationChannelId) {
+        if (!config.notifications.channelId) {
             return interaction.reply({
                 content: '❌ Please set up a notification channel first with `/setup-streaming`',
                 ephemeral: true
@@ -29,25 +29,26 @@ module.exports = {
         await interaction.deferReply({ ephemeral: true });
 
         try {        
-        const channelId = await youtubeMonitor.extractChannelId(input);
-        
-        if (!channelId) {
-            return interaction.editReply('❌ Invalid YouTube channel. Please provide a channel URL, @handle, or channel ID (UC...).');
-        }
-        
-        if (guildConfig.youtube.channels.includes(channelId)) {
-            return interaction.editReply('❌ This channel is already being monitored!');
-        }
-        
-        const channelName = await youtubeMonitor.getChannelName(channelId);
-        
-        streamingConfig.addYouTubeChannel(interaction.guildId, channelId);
-        
-        await interaction.editReply(
-            `✅ Added **${channelName}** to monitoring!\n\nChannel ID: \`${channelId}\`\n\nThe bot will check for new videos every 5 minutes.`
-        );
-        
-        console.log(`[Command] Added YouTube channel ${channelId} (${channelName}) in guild ${interaction.guildId}`);
+            const channelId = await youtubeMonitor.extractChannelId(input);
+            
+            if (!channelId) {
+                return interaction.editReply('❌ Invalid YouTube channel. Please provide a channel URL, @handle, or channel ID (UC...).');
+            }
+            
+            const channels = guildConfig.getYouTubeChannels(interaction.guildId);
+            if (channels.includes(channelId)) {
+                return interaction.editReply('❌ This channel is already being monitored!');
+            }
+            
+            const channelName = await youtubeMonitor.getChannelName(channelId);
+            
+            guildConfig.addYouTubeChannel(interaction.guildId, channelId);
+            
+            await interaction.editReply(
+                `✅ Added **${channelName}** to monitoring!\n\nChannel ID: \`${channelId}\`\n\nThe bot will check for new videos every 5 minutes.`
+            );
+            
+            console.log(`[Command] Added YouTube channel ${channelId} (${channelName}) in guild ${interaction.guildId}`);
         } catch (error) {
             console.error('[Command] Error adding YouTube channel:', error);
             await interaction.editReply('❌ An error occurred while adding the YouTube channel. Please try again.');

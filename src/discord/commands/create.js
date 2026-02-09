@@ -39,7 +39,7 @@ module.exports = {
     ),
 
   async execute(interaction, context) {
-    const { eventManager, eventsConfig } = context;
+    const { eventManager, guildConfig } = context;
 
     try {
       await interaction.deferReply({ ephemeral: true });
@@ -51,8 +51,8 @@ module.exports = {
       const duration = interaction.options.getInteger('duration') || 60;
       const maxParticipants = interaction.options.getInteger('max_participants') || 10;
 
-      // Determine which channel to post to
-      const configuredChannelId = eventsConfig.getEventChannel(interaction.guildId);
+      // Determine which channel to post to using unified config
+      const configuredChannelId = guildConfig.getEventChannel(interaction.guildId);
       const targetChannelId = configuredChannelId || interaction.channelId;
       
       // Fetch the target channel

@@ -7,10 +7,10 @@ module.exports = {
     .setDescription('Show all monitored YouTube channels'),
   
   async execute(interaction, context) {
-    const { streamingConfig, youtubeMonitor } = context;
-    const guildConfig = streamingConfig.getGuildConfig(interaction.guildId);
+    const { guildConfig, youtubeMonitor } = context;
+    const config = guildConfig.getGuildConfig(interaction.guildId);
     
-    if (!guildConfig.youtube.channels || guildConfig.youtube.channels.length === 0) {
+    if (!config.youtube.channels || config.youtube.channels.length === 0) {
       return interaction.reply({
         content: '📋 No YouTube channels are currently being monitored.\n\nAdd one with `/add-youtube`',
         ephemeral: true
@@ -23,12 +23,12 @@ module.exports = {
       const embed = new EmbedBuilder()
         .setColor('#FF0000')
         .setTitle('📺 Monitored YouTube Channels')
-        .setDescription(`Total: ${guildConfig.youtube.channels.length} channel(s)`)
+        .setDescription(`Total: ${config.youtube.channels.length} channel(s)`)
         .setTimestamp();
       
       const channelDetails = [];
       
-      for (const channelId of guildConfig.youtube.channels) {
+      for (const channelId of config.youtube.channels) {
         let channelName;
         try {
           channelName = await youtubeMonitor.getChannelName(channelId);
@@ -45,10 +45,10 @@ module.exports = {
         inline: false
       });
       
-      if (guildConfig.notificationChannelId) {
+      if (config.notifications.channelId) {
         embed.addFields({
           name: 'Notification Channel',
-          value: `<#${guildConfig.notificationChannelId}>`,
+          value: `<#${config.notifications.channelId}>`,
           inline: false
         });
       }

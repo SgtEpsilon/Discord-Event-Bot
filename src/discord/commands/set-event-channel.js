@@ -14,7 +14,7 @@ module.exports = {
     .setDMPermission(false),
 
   async execute(interaction, context) {
-    const { eventsConfig } = context;
+    const { guildConfig } = context;
 
     try {
       const channel = interaction.options.getChannel('channel');
@@ -38,8 +38,8 @@ module.exports = {
         return;
       }
 
-      // Set the event channel
-      eventsConfig.setEventChannel(guildId, channel.id);
+      // Set the event channel using unified config
+      guildConfig.setEventChannel(guildId, channel.id);
 
       await interaction.reply({
         content: `✅ Event channel set to ${channel}!\n\nAll events created with \`/create\` and \`/preset\` will now be posted there.`,

@@ -8,13 +8,13 @@ module.exports = {
     .setDMPermission(false),
 
   async execute(interaction, context) {
-    const { eventsConfig } = context;
+    const { guildConfig } = context;
 
     try {
       const guildId = interaction.guildId;
 
       // Check if an event channel is currently set
-      if (!eventsConfig.hasEventChannel(guildId)) {
+      if (!guildConfig.hasEventChannel(guildId)) {
         await interaction.reply({
           content: '❌ No event channel is currently set. Use `/set-event-channel` to configure one.',
           ephemeral: true
@@ -23,12 +23,12 @@ module.exports = {
       }
 
       // Get the current channel before removing it
-      const currentChannelId = eventsConfig.getEventChannel(guildId);
+      const currentChannelId = guildConfig.getEventChannel(guildId);
       const currentChannel = interaction.guild.channels.cache.get(currentChannelId);
       const channelMention = currentChannel ? currentChannel.toString() : `<#${currentChannelId}>`;
 
-      // Remove the event channel setting
-      eventsConfig.removeEventChannel(guildId);
+      // Remove the event channel setting using unified config
+      guildConfig.removeEventChannel(guildId);
 
       await interaction.reply({
         content: `✅ Event channel cleared!\n\nPrevious channel: ${channelMention}\n\nEvents will now be posted in the channel where the command is used.`,

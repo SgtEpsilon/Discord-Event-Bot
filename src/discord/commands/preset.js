@@ -31,7 +31,7 @@ module.exports = {
     ),
 
   async execute(interaction, context) {
-    const { eventManager, presetManager, eventsConfig } = context;
+    const { eventManager, presetManager, guildConfig } = context;
 
     try {
       await interaction.deferReply({ ephemeral: true });
@@ -52,8 +52,8 @@ module.exports = {
         return;
       }
 
-      // Determine which channel to post to
-      const configuredChannelId = eventsConfig.getEventChannel(interaction.guildId);
+      // Determine which channel to post to using unified config
+      const configuredChannelId = guildConfig.getEventChannel(interaction.guildId);
       const targetChannelId = configuredChannelId || interaction.channelId;
       
       // Fetch the target channel

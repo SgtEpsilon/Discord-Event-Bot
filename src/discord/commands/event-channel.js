@@ -7,12 +7,12 @@ module.exports = {
     .setDMPermission(false),
 
   async execute(interaction, context) {
-    const { eventsConfig } = context;
+    const { guildConfig } = context;
 
     try {
       const guildId = interaction.guildId;
 
-      if (!eventsConfig.hasEventChannel(guildId)) {
+      if (!guildConfig.hasEventChannel(guildId)) {
         await interaction.reply({
           content: '📢 **Event Channel Status**\n\n❌ No event channel is currently set.\n\nEvents will be posted in the channel where the command is used.\n\nUse `/set-event-channel` to configure a dedicated events channel.',
           ephemeral: true
@@ -20,7 +20,7 @@ module.exports = {
         return;
       }
 
-      const channelId = eventsConfig.getEventChannel(guildId);
+      const channelId = guildConfig.getEventChannel(guildId);
       const channel = interaction.guild.channels.cache.get(channelId);
 
       if (!channel) {

@@ -2,10 +2,10 @@
 const axios = require('axios');
 
 class TwitchMonitor {
-    constructor(client, config, streamingConfig) {
+    constructor(client, config, guildConfig) {
         this.client = client;
         this.config = config;
-        this.streamingConfig = streamingConfig;
+        this.guildConfig = guildConfig;  // Changed from streamingConfig to guildConfig
         this.accessToken = null;
         this.tokenExpiresAt = null;
         this.liveStreamers = new Map(); // Track which streamers are currently live
@@ -74,7 +74,7 @@ class TwitchMonitor {
         this.isCheckingStreams = true;
 
         try {
-            const allConfigs = this.streamingConfig.getAllGuildConfigs();
+            const allConfigs = this.guildConfig.getAllGuildConfigs();
             const allStreamers = new Set();
 
             // Collect all unique streamers across all guilds
@@ -169,11 +169,11 @@ class TwitchMonitor {
 
             // Send notifications to all guilds tracking this streamer
             for (const [guildId, config] of Object.entries(allConfigs)) {
-                if (!config.twitch?.enabled || !config.notificationChannelId) {
+                if (!config.twitch?.enabled || !config.notifications?.channelId) {
                     continue;
                 }
 
-                const trackedStreamers = config.twitch.streamers.map(s => s.toLowerCase());
+                const trackedStreamers = (config.twitch.streamers || []).map(s => s.toLowerCase());
                 if (!trackedStreamers.includes(username)) {
                     continue;
                 }
@@ -197,17 +197,18 @@ class TwitchMonitor {
      */
     async sendNotification(guildId, config, stream) {
         try {
-            const channel = await this.client.channels.fetch(config.notificationChannelId);
+            const channel = await this.client.channels.fetch(config.notifications.channelId);
             if (!channel) return;
 
             const username = stream.user_login;
             const customMessage = config.twitch.customMessages?.[username];
-            const messageTemplate = customMessage || config.twitch.message;
+            const messageTemplate = customMessage || '🔴 {username} is now live!\n**{title}**\nPlaying: {game}';
 
             const message = messageTemplate
-                .replace('{username}', stream.user_name)
-                .replace('{title}', stream.title)
-                .replace('{game}', stream.game_name || 'Unknown');
+                .replace(/{username}/g, stream.user_name)
+                .replace(/{title}/g, stream.title)
+                .replace(/{game}/g, stream.game_name || 'Unknown')
+                .replace(/{url}/g, `https://twitch.tv/${username}`);
 
             await channel.send({
                 content: message,
@@ -245,6 +246,36 @@ class TwitchMonitor {
     }
 
     /**
+     * Validate Twitch username
+     */
+    async validateUsername(username) {
+        try {
+            const token = await this.getAccessToken();
+            const response = await axios.get('https://api.twitch.tv/helix/users', {
+                headers: {
+                    'Client-ID': this.config.twitch.clientId,
+                    'Authorization': `Bearer ${token}`
+                },
+                params: {
+                    login: username
+                }
+            });
+            
+            return response.data.data && response.data.data.length > 0;
+        } catch (error) {
+            console.error('[Twitch] Error validating username:', error.message);
+            return false;
+        }
+    }
+
+    /**
+     * Check if monitor is enabled
+     */
+    isEnabled() {
+        return this.config.twitch?.enabled;
+    }
+
+    /**
      * Start monitoring
      */
     start() {
@@ -253,7 +284,7 @@ class TwitchMonitor {
             return;
         }
 
-        const interval = this.config.twitch.checkInterval || 60000;
+        const interval = this.config.bot?.twitchCheckInterval || 60000;
         
         console.log(`[Twitch] 🎮 Starting monitor (checking every ${interval / 1000}s)`);
         
