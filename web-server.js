@@ -1,4 +1,4 @@
-// web-server.js - Complete implementation with bidirectional sync
+// web-server.js - Complete implementation with bidirectional sync and Calendar Management
 const express = require('express');
 const path = require('path');
 const cors = require('cors');
@@ -43,13 +43,39 @@ function verifyApiKey() {
   };
 }
 
+// Initialize services
 const calendarService = new CalendarService(config.google.credentials, config.google.calendars);
 const eventManager = new EventManager(config.files.events, calendarService);
 const presetManager = new PresetManager(config.files.presets);
 const eventsConfig = new EventsConfig(config.files.eventsConfig || path.join(__dirname, 'data/events-config.json'));
-const streamingConfigPath = path.resolve(__dirname, config.files.streaming || 'data/streaming-config.json');
+const streamingConfigPath = path.resolve(__dirname, config.files.streaming || 'data/streaming.json');
 const streamingConfig = new StreamingConfig(streamingConfigPath);
 
+// Path to store calendar configurations
+const calendarConfigPath = path.join(__dirname, 'data', 'calendar-config.json');
+
+// Helper to load calendar config
+function loadCalendarConfig() {
+  try {
+    if (fs.existsSync(calendarConfigPath)) {
+      return JSON.parse(fs.readFileSync(calendarConfigPath, 'utf8'));
+    }
+  } catch (error) {
+    console.error('Error loading calendar config:', error);
+  }
+  return { calendars: [] };
+}
+
+// Helper to save calendar config
+function saveCalendarConfig(configData) {
+  const dir = path.dirname(calendarConfigPath);
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true });
+  }
+  fs.writeFileSync(calendarConfigPath, JSON.stringify(configData, null, 2), 'utf8');
+}
+
+// Public endpoints
 app.post('/api/verify-key', (req, res) => {
   const { apiKey } = req.body;
   if (!apiKey) return res.status(400).json({ success: false, error: 'API key required' });
@@ -71,12 +97,14 @@ app.post('/api/verify-key', (req, res) => {
   res.json({ success: true, message: 'API key verified' });
 });
 
+// Protected endpoints
 app.use('/api', verifyApiKey());
 
 app.get('/api/health', (req, res) => {
   res.json({ success: true, status: 'healthy', timestamp: new Date().toISOString() });
 });
 
+// ==================== EVENTS ENDPOINTS ====================
 app.get('/api/events', (req, res) => {
   try {
     const events = eventManager.getAllEvents();
@@ -177,6 +205,7 @@ app.delete('/api/events/:id', (req, res) => {
   }
 });
 
+// ==================== PRESETS ENDPOINTS ====================
 app.get('/api/presets', (req, res) => {
   try {
     const presets = presetManager.loadPresets();
@@ -249,7 +278,6 @@ app.post('/api/events/from-preset', async (req, res) => {
       return res.status(400).json({ success: false, error: 'Preset name and dateTime are required' });
     }
     
-    // Validate guild/channel combination
     if (guildId && !channelId) {
       return res.status(400).json({ success: false, error: 'channelId required when guildId is provided' });
     }
@@ -298,16 +326,36 @@ app.post('/api/events/from-preset', async (req, res) => {
   }
 });
 
+// ==================== STATS ENDPOINT (DYNAMIC) ====================
 app.get('/api/stats', (req, res) => {
   try {
-    const stats = eventManager.getStats();
-    stats.totalPresets = presetManager.getPresetCount();
+    const allEvents = eventManager.getAllEvents();
+    const eventList = Object.values(allEvents);
+    
+    // Calculate upcoming events (events in the future)
+    const now = new Date();
+    const upcomingEvents = eventList.filter(event => new Date(event.dateTime) > now);
+    
+    // Calculate total signups across all events
+    const totalSignups = eventList.reduce((sum, event) => {
+      const eventSignups = Object.values(event.signups || {}).reduce((s, arr) => s + arr.length, 0);
+      return sum + eventSignups;
+    }, 0);
+    
+    const stats = {
+      totalEvents: eventList.length,
+      upcomingEvents: upcomingEvents.length,
+      totalSignups: totalSignups,
+      totalPresets: presetManager.getPresetCount()
+    };
+    
     res.json({ success: true, stats });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
 });
 
+// ==================== GUILD & CHANNEL ENDPOINTS ====================
 app.get('/api/guilds', (req, res) => {
   try {
     const guildListPath = path.join(__dirname, 'data', 'guilds.json');
@@ -342,7 +390,6 @@ app.get('/api/guilds/:guildId/channels', (req, res) => {
     const allChannels = JSON.parse(fs.readFileSync(channelListPath, 'utf8'));
     const guildChannels = allChannels[req.params.guildId] || [];
     
-    // Filter to text channels only (type 0 = GUILD_TEXT)
     const textChannels = guildChannels.filter(ch => ch.type === 0);
     
     res.json({ success: true, channels: textChannels });
@@ -351,6 +398,7 @@ app.get('/api/guilds/:guildId/channels', (req, res) => {
   }
 });
 
+// ==================== EVENT CHANNEL CONFIG ====================
 app.get('/api/event-channel/:guildId', (req, res) => {
   try {
     const channelId = eventsConfig.getEventChannel(req.params.guildId);
@@ -381,6 +429,7 @@ app.delete('/api/event-channel/:guildId', (req, res) => {
   }
 });
 
+// ==================== STREAMING CONFIG ====================
 app.get('/api/streaming/:guildId', (req, res) => {
   try {
     const config = streamingConfig.getGuildConfig(req.params.guildId);
@@ -453,6 +502,126 @@ app.get('/api/streaming/all', (req, res) => {
   }
 });
 
+// ==================== GOOGLE CALENDAR MANAGEMENT ====================
+
+// Get all calendar integrations
+app.get('/api/calendar/integrations', (req, res) => {
+  try {
+    const calendarConfig = loadCalendarConfig();
+    res.json({ success: true, calendars: calendarConfig.calendars || [] });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Add new calendar integration
+app.post('/api/calendar/integrations', (req, res) => {
+  try {
+    const { name, calendarId, credentials } = req.body;
+    
+    if (!name || !calendarId) {
+      return res.status(400).json({ success: false, error: 'Name and calendarId are required' });
+    }
+    
+    const calendarConfig = loadCalendarConfig();
+    
+    // Check if calendar ID already exists
+    if (calendarConfig.calendars.some(cal => cal.id === calendarId)) {
+      return res.status(400).json({ success: false, error: 'Calendar ID already exists' });
+    }
+    
+    // Add new calendar
+    const newCalendar = {
+      name,
+      id: calendarId,
+      credentials: credentials || null,
+      addedAt: new Date().toISOString()
+    };
+    
+    calendarConfig.calendars.push(newCalendar);
+    saveCalendarConfig(calendarConfig);
+    
+    res.json({ success: true, message: 'Calendar integration added', calendar: newCalendar });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Update calendar integration
+app.put('/api/calendar/integrations/:calendarId', (req, res) => {
+  try {
+    const { name, credentials } = req.body;
+    const calendarConfig = loadCalendarConfig();
+    
+    const calendarIndex = calendarConfig.calendars.findIndex(cal => cal.id === req.params.calendarId);
+    
+    if (calendarIndex === -1) {
+      return res.status(404).json({ success: false, error: 'Calendar not found' });
+    }
+    
+    if (name) calendarConfig.calendars[calendarIndex].name = name;
+    if (credentials !== undefined) calendarConfig.calendars[calendarIndex].credentials = credentials;
+    calendarConfig.calendars[calendarIndex].updatedAt = new Date().toISOString();
+    
+    saveCalendarConfig(calendarConfig);
+    
+    res.json({ success: true, message: 'Calendar integration updated', calendar: calendarConfig.calendars[calendarIndex] });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Delete calendar integration
+app.delete('/api/calendar/integrations/:calendarId', (req, res) => {
+  try {
+    const calendarConfig = loadCalendarConfig();
+    
+    const calendarIndex = calendarConfig.calendars.findIndex(cal => cal.id === req.params.calendarId);
+    
+    if (calendarIndex === -1) {
+      return res.status(404).json({ success: false, error: 'Calendar not found' });
+    }
+    
+    const deletedCalendar = calendarConfig.calendars[calendarIndex];
+    calendarConfig.calendars.splice(calendarIndex, 1);
+    
+    saveCalendarConfig(calendarConfig);
+    
+    res.json({ success: true, message: 'Calendar integration deleted', calendar: deletedCalendar });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Test calendar connection
+app.post('/api/calendar/test/:calendarId', async (req, res) => {
+  try {
+    const calendarConfig = loadCalendarConfig();
+    const calendar = calendarConfig.calendars.find(cal => cal.id === req.params.calendarId);
+    
+    if (!calendar) {
+      return res.status(404).json({ success: false, error: 'Calendar not found' });
+    }
+    
+    // Create a temporary calendar service to test
+    const testService = new CalendarService(
+      calendar.credentials || config.google.credentials,
+      [{ name: calendar.name, id: calendar.id }]
+    );
+    
+    const isConnected = await testService.testConnection();
+    
+    res.json({ 
+      success: true, 
+      connected: isConnected,
+      message: isConnected ? 'Calendar connection successful' : 'Calendar connection failed'
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message, connected: false });
+  }
+});
+
+// ==================== CALENDAR SYNC ENDPOINTS ====================
 app.get('/api/calendar/status', (req, res) => {
   try {
     const enabled = calendarService.isEnabled();
@@ -540,6 +709,7 @@ app.post('/api/autosync/toggle', (req, res) => {
   }
 });
 
+// ==================== BOT CONTROL ====================
 app.get('/api/bot/status', (req, res) => {
   try {
     const botStatusPath = path.join(__dirname, 'data', 'bot-status.json');
@@ -702,7 +872,8 @@ app.listen(PORT, '0.0.0.0', () => {
   console.log(`\n💡 Features:`);
   console.log(`   ✅ Bidirectional sync: Web ↔ Discord`);
   console.log(`   ✅ Auto-posting: Events post to Discord in 10s`);
-  console.log(`   ✅ Channel selection: Per-event Discord targeting\n`);
+  console.log(`   ✅ Channel selection: Per-event Discord targeting`);
+  console.log(`   ✅ Google Calendar Management: Add/Edit/Delete integrations\n`);
 });
 
 function formatUptime(seconds) {
