@@ -264,29 +264,43 @@
                     </form>
                 </div>
 
-                <!-- ==================== CALENDAR TAB ==================== -->
+                <!-- ==================== CALENDAR TAB (UPDATED) ==================== -->
                 <div class="tab-content" id="calendar">
                     <div class="section-title">
                         <h2>🗓️ Google Calendar Integration</h2>
                     </div>
                     <div class="alert hidden" id="calendarStatusAlert"></div>
                     
+                    <!-- Connection Status (MOVED TO TOP, MORE CLEAR) -->
                     <div class="config-card">
                         <div class="config-header">
-                            <div class="config-title">Connection Status</div>
+                            <div class="config-title">🔗 Connection Status</div>
+                            <button class="btn btn-secondary" onclick="checkCalendarStatus()">🔄 Refresh Status</button>
                         </div>
                         <div class="config-meta">
-                            <p id="calendarConnectionStatus">Loading...</p>
+                            <div id="calendarConnectionStatus" style="padding: 15px; background: #f5f5f5; border-radius: 6px; margin: 10px 0;">
+                                <p style="margin: 0; font-size: 14px; color: #666;">Loading...</p>
+                            </div>
                         </div>
-                        <button class="btn btn-secondary" onclick="checkCalendarStatus()">🔄 Refresh Status</button>
                     </div>
 
+                    <!-- Configured Calendars -->
                     <div class="config-card">
                         <div class="config-header">
-                            <div class="config-title">Manual Sync</div>
+                            <div class="config-title">📅 Configured Calendars</div>
+                        </div>
+                        <div id="calendarsList">
+                            <div class="loading">Loading calendars...</div>
+                        </div>
+                    </div>
+
+                    <!-- Manual Sync -->
+                    <div class="config-card">
+                        <div class="config-header">
+                            <div class="config-title">🔄 Manual Sync</div>
                         </div>
                         <div class="config-meta">
-                            <p>Sync events from Google Calendar to Discord</p>
+                            <p>Sync events from Google Calendar to Discord manually</p>
                         </div>
                         <form onsubmit="event.preventDefault(); syncCalendar();">
                             <div class="form-group">
@@ -306,21 +320,16 @@
                         <div class="alert hidden" id="syncStatusAlert"></div>
                     </div>
 
+                    <!-- Auto-Sync Settings (MOVED TO BOTTOM WITH CLEARER STATUS) -->
                     <div class="config-card">
                         <div class="config-header">
-                            <div class="config-title">Configured Calendars</div>
-                        </div>
-                        <div id="calendarsList">
-                            <div class="loading">Loading calendars...</div>
-                        </div>
-                    </div>
-
-                    <div class="config-card">
-                        <div class="config-header">
-                            <div class="config-title">Auto-Sync Settings</div>
+                            <div class="config-title">⚡ Auto-Sync Settings</div>
                         </div>
                         <div class="config-meta">
-                            <p id="autosyncStatus">Loading auto-sync status...</p>
+                            <p><strong>Auto-Sync Status:</strong></p>
+                            <div id="autosyncStatus" style="padding: 15px; background: #f5f5f5; border-radius: 6px; margin: 10px 0;">
+                                <p style="margin: 0; font-size: 14px; color: #666;">Loading auto-sync status...</p>
+                            </div>
                         </div>
                         <div class="action-buttons">
                             <button class="btn btn-secondary" onclick="getAutosyncStatus()">🔄 Refresh</button>
