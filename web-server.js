@@ -5,7 +5,7 @@ const cors = require('cors');
 const crypto = require('crypto');
 const fs = require('fs');
 const { exec } = require('child_process');
-require('dotenv').config();
+require('dotenv').config({ path: path.join(__dirname, '.env') });
 
 const { config } = require('./src/config/index');
 const EventManager = require('./src/services/eventManager');
