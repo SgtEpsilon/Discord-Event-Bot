@@ -1,0 +1,24 @@
+{
+  "uptime": 1984.848832,
+  "uptimeFormatted": "33m",
+  "memory": {
+    "rss": 124223488,
+    "heapTotal": 67776512,
+    "heapUsed": 65172496,
+    "external": 3972897,
+    "arrayBuffers": 215020
+  },
+  "nodeVersion": "v24.13.0",
+  "pid": 4328,
+  "botName": "Testbot#9379",
+  "guildCount": 1,
+  "timestamp": "2026-02-11T16:14:42.358Z",
+  "status": "online",
+  "autoSync": {
+    "enabled": true,
+    "interval": 300000,
+    "intervalFormatted": "5 minutes",
+    "channelId": "1469502056435024003",
+    "guildId": "1460761916619227361"
+  }
+}

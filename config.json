@@ -1,0 +1,16 @@
+{
+  "files": {
+    "guildConfig": "./data/guild-config.json"
+  },
+  "web": {
+    "port": 3000
+  },
+  "features": {
+    "twitch": true,
+    "youtube": true,
+    "events": true
+  },
+  "defaults": {
+    "eventChannelName": "events"
+  }
+}

@@ -264,14 +264,14 @@
                     </form>
                 </div>
 
-                <!-- ==================== CALENDAR TAB (UPDATED) ==================== -->
+                <!-- ==================== CALENDAR TAB ==================== -->
                 <div class="tab-content" id="calendar">
                     <div class="section-title">
                         <h2>🗓️ Google Calendar Integration</h2>
                     </div>
                     <div class="alert hidden" id="calendarStatusAlert"></div>
                     
-                    <!-- Connection Status (MOVED TO TOP) -->
+                    <!-- Connection Status -->
                     <div class="config-card">
                         <div class="config-header">
                             <div class="config-title">🔗 Connection Status</div>
@@ -320,7 +320,7 @@
                         <div class="alert hidden" id="syncStatusAlert"></div>
                     </div>
 
-                    <!-- Auto-Sync Settings (MOVED TO BOTTOM) -->
+                    <!-- Auto-Sync Settings -->
                     <div class="config-card">
                         <div class="config-header">
                             <div class="config-title">⚡ Auto-Sync Settings</div>
@@ -356,26 +356,6 @@
                     </div>
 
                     <div id="streamingContent" class="hidden">
-                        <!-- Notification Channel -->
-                        <div class="config-card">
-                            <div class="config-header">
-                                <div class="config-title">🔔 Notification Channel</div>
-                            </div>
-                            <div class="config-meta">
-                                <p>Channel where streaming notifications will be posted</p>
-                            </div>
-                            <form onsubmit="event.preventDefault(); saveNotificationChannel();">
-                                <div class="form-group">
-                                    <label>Channel ID</label>
-                                    <input type="text" id="notificationChannelInput" placeholder="e.g., 123456789012345678">
-                                </div>
-                                <div class="action-buttons">
-                                    <button type="submit" class="btn btn-primary">Save Channel</button>
-                                </div>
-                            </form>
-                            <div class="alert hidden" id="notificationStatus"></div>
-                        </div>
-
                         <!-- Twitch Configuration -->
                         <div class="config-card twitch">
                             <div class="config-header">
@@ -464,6 +444,26 @@
                                 </div>
                             </form>
                             <div class="alert hidden" id="eventChannelStatus"></div>
+                        </div>
+
+                        <!-- Notification Channel -->
+                        <div class="config-card">
+                            <div class="config-header">
+                                <div class="config-title">🔔 Streaming Notification Channel</div>
+                            </div>
+                            <div class="config-meta">
+                                <p>Channel where streaming notifications (Twitch/YouTube) will be posted</p>
+                            </div>
+                            <form onsubmit="event.preventDefault(); saveNotificationChannel();">
+                                <div class="form-group">
+                                    <label>Channel ID</label>
+                                    <input type="text" id="notificationChannelInput" placeholder="e.g., 123456789012345678">
+                                </div>
+                                <div class="action-buttons">
+                                    <button type="submit" class="btn btn-primary">Save Channel</button>
+                                </div>
+                            </form>
+                            <div class="alert hidden" id="notificationStatus"></div>
                         </div>
                     </div>
 
