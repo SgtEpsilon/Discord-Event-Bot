@@ -9,7 +9,15 @@
     "start:all": "node start-all.js",
     "dev": "nodemon src/bot.js",
     "dev:web": "nodemon web-server.js",
-    "dev:all": "concurrently \"nodemon src/bot.js\" \"nodemon web-server.js\""
+    "dev:all": "concurrently \"nodemon src/bot.js\" \"nodemon web-server.js\"",
+    "pm2:start": "pm2 start src/bot.js --name discord-event-bot && pm2 start web-server.js --name web-server && pm2 save",
+    "pm2:stop": "pm2 stop discord-event-bot web-server",
+    "pm2:restart": "pm2 restart discord-event-bot web-server --update-env",
+    "pm2:delete": "pm2 delete discord-event-bot web-server",
+    "pm2:logs": "pm2 logs",
+    "pm2:status": "pm2 list",
+    "pm2:monit": "pm2 monit",
+    "install:pm2": "npm install -g pm2"
   },
   "keywords": [
     "discord",
@@ -38,5 +46,12 @@
   "devDependencies": {
     "nodemon": "^3.0.2",
     "concurrently": "^8.2.2"
+  },
+  "optionalDependencies": {
+    "pm2": "^5.3.0"
+  },
+  "engines": {
+    "node": ">=16.0.0",
+    "npm": ">=8.0.0"
   }
 }

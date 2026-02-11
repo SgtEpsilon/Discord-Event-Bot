@@ -1,4 +1,4 @@
-// src/bot.js - Full bidirectional sync with web UI
+// src/bot.js - Full bidirectional sync with FAST calendar polling (5 minutes)
 const { Client, GatewayIntentBits, REST, Routes } = require('discord.js');
 const fs = require('fs');
 const path = require('path');
@@ -41,7 +41,7 @@ const eventsConfig = new EventsConfig(
 const webEventPoster = new WebEventPoster(null, eventManager); // Client set in ready event
 
 // Initialize streaming services
-const streamingConfigPath = path.resolve(__dirname, config.files.streaming || 'data/streaming-config.json');
+const streamingConfigPath = path.resolve(__dirname, config.files.streaming || 'data/streaming.json');
 const streamingConfig = new StreamingConfigManager(streamingConfigPath);
 
 let twitchMonitor = null;
@@ -59,10 +59,11 @@ const client = new Client({
 // Set client for web event poster
 webEventPoster.client = client;
 
-// Auto-sync state
+// Auto-sync state - NOW WITH 5 MINUTE INTERVAL!
 let autoSyncInterval = null;
 let autoSyncChannelId = null;
 let autoSyncGuildId = null;
+const CALENDAR_SYNC_INTERVAL = 5 * 60 * 1000; // 5 minutes (instead of 1 hour)
 
 /**
  * Load all commands dynamically
@@ -128,21 +129,26 @@ async function registerCommands(clientId) {
 }
 
 /**
- * Start auto-sync for calendar events
+ * Start auto-sync for calendar events - NOW EVERY 5 MINUTES!
  */
 function startAutoSync(channelId, guildId) {
   autoSyncChannelId = channelId;
   autoSyncGuildId = guildId;
+  
+  // Initial sync
   syncFromCalendar(channelId, guildId).catch(console.error);
+  
+  // Set up 5-minute interval
   autoSyncInterval = setInterval(async () => {
-    console.log('[AutoSync] Running scheduled sync...');
+    console.log('[AutoSync] Running scheduled sync (5-minute interval)...');
     try {
       await syncFromCalendar(channelId, guildId);
     } catch (error) {
       console.error('[AutoSync] ❌ Error during scheduled sync:', error);
     }
-  }, config.bot.autoSyncInterval);
-  console.log('[AutoSync] ✅ Auto-sync enabled');
+  }, CALENDAR_SYNC_INTERVAL);
+  
+  console.log('[AutoSync] ✅ Auto-sync enabled (checking every 5 minutes)');
 }
 
 /**
@@ -184,7 +190,11 @@ async function syncFromCalendar(channelId, guildId, calendarFilter = null) {
       }
     }
     
-    console.log(`[AutoSync] ✅ Posted ${postedCount} new events (filtered from ${result.events.length} calendar events)`);
+    if (postedCount > 0) {
+      console.log(`[AutoSync] ✅ Posted ${postedCount} new events (filtered from ${result.events.length} calendar events)`);
+    } else {
+      console.log(`[AutoSync] ℹ️ No new events to post (checked ${result.events.length} calendar events)`);
+    }
   }
   
   return result;
@@ -206,7 +216,14 @@ function updateBotStatusFile() {
     botName: client.user.tag,
     guildCount: client.guilds.cache.size,
     timestamp: new Date().toISOString(),
-    status: 'online'
+    status: 'online',
+    autoSync: {
+      enabled: !!autoSyncInterval,
+      interval: CALENDAR_SYNC_INTERVAL,
+      intervalFormatted: `${CALENDAR_SYNC_INTERVAL / 1000 / 60} minutes`,
+      channelId: autoSyncChannelId,
+      guildId: autoSyncGuildId
+    }
   };
   
   try {
@@ -286,6 +303,7 @@ client.once('ready', async () => {
   console.log('╠═══════════════════════════════════════════════════════╣');
   console.log(`║ 📅 Events System: Ready`);
   console.log(`║ 🔗 Google Calendar: ${calendarService.isEnabled() ? 'Connected' : 'Not configured'}`);
+  console.log(`║ ⚡ Calendar Sync: Every ${CALENDAR_SYNC_INTERVAL / 1000 / 60} minutes`);
   console.log(`║ 📋 Presets: ${presetManager.getPresetCount()} loaded`);
   console.log('╠═══════════════════════════════════════════════════════╣');
   console.log(`║ 🎮 Twitch Monitor: ${config.twitch?.enabled ? 'Enabled' : 'Disabled (no credentials)'}`);
@@ -359,7 +377,8 @@ client.on('interactionCreate', async interaction => {
         startAutoSync,
         stopAutoSync,
         syncFromCalendar,
-        autoSyncInterval
+        autoSyncInterval,
+        CALENDAR_SYNC_INTERVAL
       };
       
       await command.execute(interaction, context);

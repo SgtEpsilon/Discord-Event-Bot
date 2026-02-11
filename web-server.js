@@ -638,7 +638,21 @@ app.get('/api/calendar/status', (req, res) => {
       }
     }
 
-    res.json({ success: true, status, message, enabled });
+    // Read bot status to get autosync info
+    let autosyncInfo = { enabled: false, interval: 'Unknown' };
+    try {
+      const botStatusPath = path.join(__dirname, 'data', 'bot-status.json');
+      if (fs.existsSync(botStatusPath)) {
+        const botStatus = JSON.parse(fs.readFileSync(botStatusPath, 'utf8'));
+        if (botStatus.autoSync) {
+          autosyncInfo = botStatus.autoSync;
+        }
+      }
+    } catch (e) {
+      // Ignore errors reading bot status
+    }
+
+    res.json({ success: true, status, message, enabled, autosync: autosyncInfo });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
@@ -669,6 +683,51 @@ app.post('/api/commands/sync', async (req, res) => {
   }
 });
 
+// Manual trigger sync from web UI (force immediate sync in bot)
+app.post('/api/calendar/trigger-sync', async (req, res) => {
+  try {
+    if (!calendarService.isEnabled()) {
+      return res.status(400).json({ success: false, error: 'Google Calendar not configured' });
+    }
+
+    // Read bot status to check if autosync is enabled
+    const botStatusPath = path.join(__dirname, 'data', 'bot-status.json');
+    let autosyncEnabled = false;
+    let channelId = null;
+    let guildId = null;
+
+    if (fs.existsSync(botStatusPath)) {
+      const botStatus = JSON.parse(fs.readFileSync(botStatusPath, 'utf8'));
+      if (botStatus.autoSync) {
+        autosyncEnabled = botStatus.autoSync.enabled;
+        channelId = botStatus.autoSync.channelId;
+        guildId = botStatus.autoSync.guildId;
+      }
+    }
+
+    if (!autosyncEnabled) {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'Auto-sync is not enabled. Use /autosync action:on in Discord first.' 
+      });
+    }
+
+    // Perform manual sync
+    const hours = parseInt(req.body.hoursAhead) || 168;
+    const filter = req.body.filter || null;
+    const result = await calendarService.syncEvents(hours, filter);
+
+    res.json({
+      success: true,
+      message: `Manual sync triggered. Found ${result.events.length} events.`,
+      events: result.events,
+      note: 'Events will be posted to Discord by the bot automatically.'
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 app.get('/api/commands/calendars', (req, res) => {
   try {
     if (!calendarService.isEnabled()) {
@@ -683,16 +742,64 @@ app.get('/api/commands/calendars', (req, res) => {
 
 app.get('/api/autosync/status', (req, res) => {
   try {
+    // Read bot status file to get autosync info
+    const botStatusPath = path.join(__dirname, 'data', 'bot-status.json');
+    
+    if (!fs.existsSync(botStatusPath)) {
+      // Bot status file doesn't exist - bot might not be running
+      return res.json({
+        success: true,
+        autosync: {
+          enabled: false,
+          interval: 300000, // 5 minutes in ms
+          intervalFormatted: '5 minutes',
+          message: 'Bot status unavailable. Make sure Discord bot is running.',
+          warning: 'Run /autosync action:on in Discord to enable'
+        }
+      });
+    }
+    
+    const botStatus = JSON.parse(fs.readFileSync(botStatusPath, 'utf8'));
+    
+    if (botStatus.autoSync) {
+      // Auto-sync info available
+      res.json({
+        success: true,
+        autosync: {
+          enabled: botStatus.autoSync.enabled || false,
+          interval: botStatus.autoSync.interval || 300000,
+          intervalFormatted: botStatus.autoSync.intervalFormatted || '5 minutes',
+          channelId: botStatus.autoSync.channelId || null,
+          guildId: botStatus.autoSync.guildId || null,
+          message: botStatus.autoSync.enabled 
+            ? `Auto-sync is enabled and checking every ${botStatus.autoSync.intervalFormatted || '5 minutes'}`
+            : 'Auto-sync is disabled. Run /autosync action:on in Discord to enable.'
+        }
+      });
+    } else {
+      // Bot status exists but no autosync info
+      res.json({
+        success: true,
+        autosync: {
+          enabled: false,
+          interval: 300000,
+          intervalFormatted: '5 minutes',
+          message: 'Auto-sync is disabled. Run /autosync action:on in Discord to enable.'
+        }
+      });
+    }
+  } catch (error) {
+    console.error('[AutoSync Status] Error:', error);
     res.json({
       success: true,
       autosync: {
         enabled: false,
-        interval: config.bot?.autoSyncInterval || 3600000,
-        message: 'Auto-sync status requires bot IPC integration'
+        interval: 300000,
+        intervalFormatted: '5 minutes',
+        message: 'Error reading auto-sync status. Bot may not be running.',
+        error: error.message
       }
     });
-  } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
   }
 });
 

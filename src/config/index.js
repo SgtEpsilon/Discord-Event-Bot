@@ -48,19 +48,21 @@ const config = {
     apiKey: process.env.WEB_API_KEY || null  // API key for authentication
   },
   
-  // File paths - CRITICAL FIX: streaming.json NOT streaming-config.json
+  // File paths
   files: {
     events: './data/events.json',
     presets: './data/presets.json',
     eventsConfig: './data/events-config.json',
-    streaming: './data/streaming.json',      // FIXED: Correct filename
-    guilds: './data/guilds.json'             // NEW: Guild list shared with web UI
+    streaming: './data/streaming.json',
+    guilds: './data/guilds.json'
   },
   
-  // Bot settings
+  // Bot settings - UPDATED TO 5 MINUTES!
   bot: {
     commandPrefix: '!',
-    autoSyncInterval: 60 * 60 * 1000 // 1 hour in milliseconds
+    autoSyncInterval: 5 * 60 * 1000, // 5 minutes (was 1 hour)
+    twitchCheckInterval: 60 * 1000, // 1 minute
+    youtubeCheckInterval: 5 * 60 * 1000 // 5 minutes
   },
   
   // Twitch configuration (optional)
