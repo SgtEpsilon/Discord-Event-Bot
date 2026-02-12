@@ -1,48 +1,154 @@
-// public/script.js - Fixed version with working dynamic counters, event settings, and preset settings
+// public/script.js - COMPLETE FIXED VERSION
 
-let API_KEY = localStorage.getItem('discordbot_api_key') || '';
+let SESSION_TOKEN = localStorage.getItem('discordbot_session_token') || '';
 let currentGuildId = null;
 let currentStreamingGuildId = null;
 
-// ==================== API KEY MANAGEMENT ====================
-function saveApiKey() {
-    const apiKey = document.getElementById('apiKeyInput').value.trim();
+// ==================== AUTHENTICATION ====================
+
+function showLoginPopup() {
+    const popup = document.getElementById('loginPopup');
+    if (!popup) {
+        createLoginPopup();
+    }
+    document.getElementById('loginPopup').classList.remove('hidden');
+    document.getElementById('loginUsername').focus();
+}
+
+function hideLoginPopup() {
+    document.getElementById('loginPopup').classList.add('hidden');
+    document.getElementById('loginForm').reset();
+    document.getElementById('loginError').classList.add('hidden');
+}
+
+function createLoginPopup() {
+    const popup = document.createElement('div');
+    popup.id = 'loginPopup';
+    popup.className = 'login-popup hidden';
+    popup.innerHTML = `
+        <div class="login-popup-overlay" onclick="hideLoginPopup()"></div>
+        <div class="login-popup-content">
+            <div class="login-popup-header">
+                <h2>🔐 Login Required</h2>
+                <p>Please enter your credentials</p>
+            </div>
+            <form id="loginForm" onsubmit="event.preventDefault(); performLogin();">
+                <div class="form-group">
+                    <label for="loginUsername">Username</label>
+                    <input type="text" id="loginUsername" placeholder="Enter username" required autocomplete="username">
+                </div>
+                <div class="form-group">
+                    <label for="loginPassword">Password</label>
+                    <input type="password" id="loginPassword" placeholder="Enter password" required autocomplete="current-password">
+                </div>
+                <div class="alert hidden" id="loginError"></div>
+                <div class="login-popup-actions">
+                    <button type="submit" class="btn btn-primary">Login</button>
+                </div>
+            </form>
+        </div>
+    `;
+    document.body.appendChild(popup);
+}
+
+async function performLogin() {
+    const username = document.getElementById('loginUsername').value.trim();
+    const password = document.getElementById('loginPassword').value;
     
-    if (!apiKey) {
-        showAlert('authAlert', 'Please enter an API key', 'error');
+    if (!username || !password) {
+        showLoginError('Please enter both username and password');
         return;
     }
     
-    fetch('/api/verify-key', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ apiKey })
-    })
-    .then(res => res.json())
-    .then(data => {
-        if (data.success) {
-            API_KEY = apiKey;
-            localStorage.setItem('discordbot_api_key', apiKey);
-            updateAuthStatus(true);
-            showAlert('authAlert', 'API key verified and saved!', 'success');
-            document.getElementById('apiKeyInput').value = '';
+    try {
+        const response = await fetch('/api/auth/login', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ username, password })
+        });
+        
+        const data = await response.json();
+        
+        if (data.success && data.sessionToken) {
+            SESSION_TOKEN = data.sessionToken;
+            localStorage.setItem('discordbot_session_token', SESSION_TOKEN);
+            updateAuthStatus(true, data.user);
+            hideLoginPopup();
             loadDashboard();
         } else {
-            showAlert('authAlert', data.error || 'Invalid API key', 'error');
-            updateAuthStatus(false);
+            showLoginError(data.error || 'Invalid credentials');
         }
-    })
-    .catch(err => {
-        console.error('API key verification error:', err);
-        showAlert('authAlert', 'Failed to verify API key', 'error');
-        updateAuthStatus(false);
-    });
+    } catch (error) {
+        console.error('Login error:', error);
+        showLoginError('Login failed. Please try again.');
+    }
 }
 
-function updateAuthStatus(isAuthenticated) {
+function showLoginError(message) {
+    const errorEl = document.getElementById('loginError');
+    errorEl.textContent = message;
+    errorEl.className = 'alert error';
+    errorEl.classList.remove('hidden');
+}
+
+async function logout() {
+    try {
+        await fetch('/api/auth/logout', {
+            method: 'POST',
+            headers: getHeaders()
+        });
+    } catch (error) {
+        console.error('Logout error:', error);
+    }
+    
+    SESSION_TOKEN = '';
+    localStorage.removeItem('discordbot_session_token');
+    updateAuthStatus(false);
+    showLoginPopup();
+}
+
+async function checkSession() {
+    if (!SESSION_TOKEN) {
+        updateAuthStatus(false);
+        showLoginPopup();
+        return false;
+    }
+    
+    try {
+        const response = await fetch('/api/auth/check', {
+            headers: getHeaders()
+        });
+        
+        const data = await response.json();
+        
+        if (data.success && data.authenticated) {
+            updateAuthStatus(true, data.user);
+            return true;
+        } else {
+            SESSION_TOKEN = '';
+            localStorage.removeItem('discordbot_session_token');
+            updateAuthStatus(false);
+            showLoginPopup();
+            return false;
+        }
+    } catch (error) {
+        console.error('Session check error:', error);
+        updateAuthStatus(false);
+        showLoginPopup();
+        return false;
+    }
+}
+
+function updateAuthStatus(isAuthenticated, username = '') {
     const statusEl = document.getElementById('authStatus');
+    const apiKeySection = document.querySelector('.api-key-section');
+    
+    if (apiKeySection) {
+        apiKeySection.style.display = 'none';
+    }
+    
     if (isAuthenticated) {
-        statusEl.textContent = '🔓 Authenticated';
+        statusEl.innerHTML = `🔓 ${username} <button class="btn btn-secondary btn-sm" onclick="logout()" style="margin-left: 10px; padding: 4px 8px; font-size: 12px;">Logout</button>`;
         statusEl.className = 'status authenticated';
     } else {
         statusEl.textContent = '🔒 Not authenticated';
@@ -53,8 +159,27 @@ function updateAuthStatus(isAuthenticated) {
 function getHeaders() {
     return {
         'Content-Type': 'application/json',
-        'X-API-Key': API_KEY
+        'X-Session-Token': SESSION_TOKEN
     };
+}
+
+async function apiRequest(url, options = {}) {
+    const headers = getHeaders();
+    
+    const response = await fetch(url, {
+        ...options,
+        headers: { ...headers, ...options.headers }
+    });
+    
+    if (response.status === 401) {
+        SESSION_TOKEN = '';
+        localStorage.removeItem('discordbot_session_token');
+        updateAuthStatus(false);
+        showLoginPopup();
+        throw new Error('Authentication required');
+    }
+    
+    return response;
 }
 
 // ==================== NAVIGATION ====================
@@ -69,9 +194,10 @@ function switchTab(tabName) {
     
     event.target.closest('.channel-item')?.classList.add('active');
     
-    // Load data when switching to specific tabs
     if (tabName === 'events') loadEvents();
     if (tabName === 'presets') loadPresets();
+    if (tabName === 'create-preset') return; // No special loading
+    if (tabName === 'create-event') return; // No special loading
     if (tabName === 'create-from-preset') loadPresetsForSelect();
     if (tabName === 'calendar') loadCalendarTab();
     if (tabName === 'server-settings') loadGuildsForSettings();
@@ -123,39 +249,41 @@ function loadDashboard() {
     loadPresets();
 }
 
-function loadStats() {
-    fetch('/api/stats', { headers: getHeaders() })
-        .then(res => res.json())
-        .then(data => {
-            if (data.success) {
-                document.getElementById('totalEvents').textContent = data.stats.totalEvents;
-                document.getElementById('upcomingEvents').textContent = data.stats.upcomingEvents;
-                document.getElementById('totalSignups').textContent = data.stats.totalSignups;
-                document.getElementById('totalPresets').textContent = data.stats.totalPresets;
-            }
-        })
-        .catch(err => console.error('Error loading stats:', err));
+async function loadStats() {
+    try {
+        const response = await apiRequest('/api/stats');
+        const data = await response.json();
+        
+        if (data.success) {
+            document.getElementById('totalEvents').textContent = data.stats.totalEvents;
+            document.getElementById('upcomingEvents').textContent = data.stats.upcomingEvents;
+            document.getElementById('totalSignups').textContent = data.stats.totalSignups;
+            document.getElementById('totalPresets').textContent = data.stats.totalPresets;
+        }
+    } catch (error) {
+        console.error('Error loading stats:', error);
+    }
 }
 
 // ==================== EVENTS ====================
-function loadEvents() {
+async function loadEvents() {
     const container = document.getElementById('eventsContainer');
     container.innerHTML = '<div class="loading">Loading events...</div>';
     
-    fetch('/api/events', { headers: getHeaders() })
-        .then(res => res.json())
-        .then(data => {
-            if (data.success) {
-                displayEvents(data.events);
-                loadStats(); // Refresh stats after loading events
-            } else {
-                container.innerHTML = `<div class="error">Failed to load events: ${data.error}</div>`;
-            }
-        })
-        .catch(err => {
-            console.error('Error loading events:', err);
-            container.innerHTML = '<div class="error">Failed to load events</div>';
-        });
+    try {
+        const response = await apiRequest('/api/events');
+        const data = await response.json();
+        
+        if (data.success) {
+            displayEvents(data.events);
+            loadStats();
+        } else {
+            container.innerHTML = `<div class="error">Failed to load events: ${data.error}</div>`;
+        }
+    } catch (error) {
+        console.error('Error loading events:', error);
+        container.innerHTML = '<div class="error">Failed to load events</div>';
+    }
 }
 
 function displayEvents(events) {
@@ -166,7 +294,6 @@ function displayEvents(events) {
         return;
     }
     
-    // Sort by date
     events.sort((a, b) => new Date(a.dateTime) - new Date(b.dateTime));
     
     container.innerHTML = events.map(event => `
@@ -207,30 +334,27 @@ function displayEvents(events) {
     `).join('');
 }
 
-function deleteEvent(eventId) {
+async function deleteEvent(eventId) {
     if (!confirm('Are you sure you want to delete this event?')) return;
     
-    fetch(`/api/events/${eventId}`, {
-        method: 'DELETE',
-        headers: getHeaders()
-    })
-    .then(res => res.json())
-    .then(data => {
+    try {
+        const response = await apiRequest(`/api/events/${eventId}`, { method: 'DELETE' });
+        const data = await response.json();
+        
         if (data.success) {
             loadEvents();
             loadStats();
         } else {
             alert('Failed to delete event: ' + data.error);
         }
-    })
-    .catch(err => {
-        console.error('Error deleting event:', err);
+    } catch (error) {
+        console.error('Error deleting event:', error);
         alert('Failed to delete event');
-    });
+    }
 }
 
 // ==================== CREATE EVENT ====================
-function createEvent() {
+async function createEvent() {
     const title = document.getElementById('eventTitle').value.trim();
     const description = document.getElementById('eventDescription').value.trim();
     const dateTime = document.getElementById('eventDateTime').value;
@@ -242,7 +366,6 @@ function createEvent() {
         return;
     }
     
-    // Collect roles
     const roles = [];
     document.querySelectorAll('#eventRolesContainer .role-row').forEach(row => {
         const emoji = row.querySelector('.role-emoji').value.trim();
@@ -254,22 +377,16 @@ function createEvent() {
         }
     });
     
-    const eventData = {
-        title,
-        description,
-        dateTime,
-        duration,
-        maxParticipants,
-        roles
-    };
+    const eventData = { title, description, dateTime, duration, maxParticipants, roles };
     
-    fetch('/api/events', {
-        method: 'POST',
-        headers: getHeaders(),
-        body: JSON.stringify(eventData)
-    })
-    .then(res => res.json())
-    .then(data => {
+    try {
+        const response = await apiRequest('/api/events', {
+            method: 'POST',
+            body: JSON.stringify(eventData)
+        });
+        
+        const data = await response.json();
+        
         if (data.success) {
             showAlert('createEventAlert', 'Event created successfully!', 'success');
             resetEventForm();
@@ -278,11 +395,10 @@ function createEvent() {
         } else {
             showAlert('createEventAlert', 'Failed to create event: ' + data.error, 'error');
         }
-    })
-    .catch(err => {
-        console.error('Error creating event:', err);
+    } catch (error) {
+        console.error('Error creating event:', error);
         showAlert('createEventAlert', 'Failed to create event', 'error');
-    });
+    }
 }
 
 function resetEventForm() {
@@ -324,29 +440,28 @@ function removeEventRoleRow(button) {
 }
 
 // ==================== PRESETS ====================
-function loadPresets() {
+async function loadPresets() {
     const container = document.getElementById('presetsContainer');
     container.innerHTML = '<div class="loading">Loading presets...</div>';
     
-    fetch('/api/presets', { headers: getHeaders() })
-        .then(res => res.json())
-        .then(data => {
-            if (data.success) {
-                displayPresets(data.presets);
-                loadStats(); // Refresh stats after loading presets
-            } else {
-                container.innerHTML = `<div class="error">Failed to load presets: ${data.error}</div>`;
-            }
-        })
-        .catch(err => {
-            console.error('Error loading presets:', err);
-            container.innerHTML = '<div class="error">Failed to load presets</div>';
-        });
+    try {
+        const response = await apiRequest('/api/presets');
+        const data = await response.json();
+        
+        if (data.success) {
+            displayPresets(data.presets);
+            loadStats();
+        } else {
+            container.innerHTML = `<div class="error">Failed to load presets: ${data.error}</div>`;
+        }
+    } catch (error) {
+        console.error('Error loading presets:', error);
+        container.innerHTML = '<div class="error">Failed to load presets</div>';
+    }
 }
 
 function displayPresets(presets) {
     const container = document.getElementById('presetsContainer');
-    
     const presetArray = Object.entries(presets);
     
     if (presetArray.length === 0) {
@@ -381,30 +496,27 @@ function displayPresets(presets) {
     `).join('');
 }
 
-function deletePreset(key) {
+async function deletePreset(key) {
     if (!confirm(`Are you sure you want to delete preset "${key}"?`)) return;
     
-    fetch(`/api/presets/${key}`, {
-        method: 'DELETE',
-        headers: getHeaders()
-    })
-    .then(res => res.json())
-    .then(data => {
+    try {
+        const response = await apiRequest(`/api/presets/${key}`, { method: 'DELETE' });
+        const data = await response.json();
+        
         if (data.success) {
             loadPresets();
             loadStats();
         } else {
             alert('Failed to delete preset: ' + data.error);
         }
-    })
-    .catch(err => {
-        console.error('Error deleting preset:', err);
+    } catch (error) {
+        console.error('Error deleting preset:', error);
         alert('Failed to delete preset');
-    });
+    }
 }
 
 // ==================== CREATE PRESET ====================
-function createPreset() {
+async function createPreset() {
     const key = document.getElementById('presetId').value.trim();
     const name = document.getElementById('presetName').value.trim();
     const description = document.getElementById('presetDescription').value.trim();
@@ -421,7 +533,6 @@ function createPreset() {
         return;
     }
     
-    // Collect roles
     const roles = [];
     document.querySelectorAll('#presetRolesContainer .role-row').forEach(row => {
         const emoji = row.querySelector('.role-emoji').value.trim();
@@ -438,22 +549,16 @@ function createPreset() {
         return;
     }
     
-    const presetData = {
-        key,
-        name,
-        description,
-        duration,
-        maxParticipants,
-        roles
-    };
+    const presetData = { key, name, description, duration, maxParticipants, roles };
     
-    fetch('/api/presets', {
-        method: 'POST',
-        headers: getHeaders(),
-        body: JSON.stringify(presetData)
-    })
-    .then(res => res.json())
-    .then(data => {
+    try {
+        const response = await apiRequest('/api/presets', {
+            method: 'POST',
+            body: JSON.stringify(presetData)
+        });
+        
+        const data = await response.json();
+        
         if (data.success) {
             showAlert('createPresetAlert', 'Preset created successfully!', 'success');
             resetPresetForm();
@@ -462,11 +567,10 @@ function createPreset() {
         } else {
             showAlert('createPresetAlert', 'Failed to create preset: ' + data.error, 'error');
         }
-    })
-    .catch(err => {
-        console.error('Error creating preset:', err);
+    } catch (error) {
+        console.error('Error creating preset:', error);
         showAlert('createPresetAlert', 'Failed to create preset', 'error');
-    });
+    }
 }
 
 function resetPresetForm() {
@@ -508,26 +612,28 @@ function removePresetRoleRow(button) {
 }
 
 // ==================== CREATE FROM PRESET ====================
-function loadPresetsForSelect() {
-    fetch('/api/presets', { headers: getHeaders() })
-        .then(res => res.json())
-        .then(data => {
-            if (data.success) {
-                const select = document.getElementById('fromPresetSelect');
-                select.innerHTML = '<option value="">-- Choose a preset --</option>';
-                
-                Object.entries(data.presets).forEach(([key, preset]) => {
-                    const option = document.createElement('option');
-                    option.value = key;
-                    option.textContent = `${preset.name} (${key})`;
-                    select.appendChild(option);
-                });
-            }
-        })
-        .catch(err => console.error('Error loading presets:', err));
+async function loadPresetsForSelect() {
+    try {
+        const response = await apiRequest('/api/presets');
+        const data = await response.json();
+        
+        if (data.success) {
+            const select = document.getElementById('fromPresetSelect');
+            select.innerHTML = '<option value="">-- Choose a preset --</option>';
+            
+            Object.entries(data.presets).forEach(([key, preset]) => {
+                const option = document.createElement('option');
+                option.value = key;
+                option.textContent = `${preset.name} (${key})`;
+                select.appendChild(option);
+            });
+        }
+    } catch (error) {
+        console.error('Error loading presets:', error);
+    }
 }
 
-function createEventFromPreset() {
+async function createEventFromPreset() {
     const presetName = document.getElementById('fromPresetSelect').value;
     const dateTime = document.getElementById('fromPresetDateTime').value;
     const description = document.getElementById('fromPresetDescription').value.trim();
@@ -543,13 +649,14 @@ function createEventFromPreset() {
         description: description || undefined
     };
     
-    fetch('/api/events/from-preset', {
-        method: 'POST',
-        headers: getHeaders(),
-        body: JSON.stringify(eventData)
-    })
-    .then(res => res.json())
-    .then(data => {
+    try {
+        const response = await apiRequest('/api/events/from-preset', {
+            method: 'POST',
+            body: JSON.stringify(eventData)
+        });
+        
+        const data = await response.json();
+        
         if (data.success) {
             showAlert('createFromPresetAlert', 'Event created from preset!', 'success');
             document.getElementById('fromPresetSelect').value = '';
@@ -560,106 +667,109 @@ function createEventFromPreset() {
         } else {
             showAlert('createFromPresetAlert', 'Failed to create event: ' + data.error, 'error');
         }
-    })
-    .catch(err => {
-        console.error('Error creating event from preset:', err);
+    } catch (error) {
+        console.error('Error creating event from preset:', error);
         showAlert('createFromPresetAlert', 'Failed to create event', 'error');
-    });
+    }
 }
 
-// ==================== CALENDAR ====================
+// ==================== CALENDAR TAB ====================
 function loadCalendarTab() {
     checkCalendarStatus();
     loadCalendarsList();
     getAutosyncStatus();
 }
 
-function checkCalendarStatus() {
-    fetch('/api/calendar/status', { headers: getHeaders() })
-        .then(res => res.json())
-        .then(data => {
-            const statusDiv = document.getElementById('calendarConnectionStatus');
-            if (data.success) {
-                let statusHtml = '';
-                
-                if (data.status === 'connected') {
-                    statusHtml = `
-                        <p style="margin: 0; color: #22c55e; font-weight: bold;">✅ Connected</p>
-                        <p style="margin: 5px 0 0 0; font-size: 13px; color: #666;">${data.message}</p>
-                    `;
-                } else if (data.status === 'disabled') {
-                    statusHtml = `
-                        <p style="margin: 0; color: #94a3b8; font-weight: bold;">⚠️ Not Configured</p>
-                        <p style="margin: 5px 0 0 0; font-size: 13px; color: #666;">${data.message}</p>
-                        <p style="margin: 5px 0 0 0; font-size: 12px; color: #94a3b8;">Set GOOGLE_CREDENTIALS in .env to enable</p>
-                    `;
-                } else {
-                    statusHtml = `
-                        <p style="margin: 0; color: #ef4444; font-weight: bold;">❌ Error</p>
-                        <p style="margin: 5px 0 0 0; font-size: 13px; color: #666;">${data.message}</p>
-                    `;
-                }
-                
-                statusDiv.innerHTML = statusHtml;
+async function checkCalendarStatus() {
+    const statusDiv = document.getElementById('calendarConnectionStatus');
+    statusDiv.innerHTML = '<div class="loading">Checking status...</div>';
+    
+    try {
+        const response = await apiRequest('/api/calendar/status');
+        const data = await response.json();
+        
+        if (data.success) {
+            let statusHtml = '';
+            
+            if (data.status === 'connected') {
+                statusHtml = `
+                    <p style="margin: 0; color: #22c55e; font-weight: bold;">✅ Connected</p>
+                    <p style="margin: 5px 0 0 0; font-size: 13px; color: #666;">${data.message}</p>
+                `;
+            } else if (data.status === 'disabled') {
+                statusHtml = `
+                    <p style="margin: 0; color: #94a3b8; font-weight: bold;">⚠️ Not Configured</p>
+                    <p style="margin: 5px 0 0 0; font-size: 13px; color: #666;">${data.message}</p>
+                    <p style="margin: 5px 0 0 0; font-size: 12px; color: #94a3b8;">Set GOOGLE_CREDENTIALS in .env to enable</p>
+                `;
+            } else {
+                statusHtml = `
+                    <p style="margin: 0; color: #ef4444; font-weight: bold;">❌ Error</p>
+                    <p style="margin: 5px 0 0 0; font-size: 13px; color: #666;">${data.message}</p>
+                `;
             }
-        })
-        .catch(err => {
-            console.error('Error checking calendar status:', err);
-            document.getElementById('calendarConnectionStatus').innerHTML = `
-                <p style="margin: 0; color: #ef4444; font-weight: bold;">❌ Connection Error</p>
-                <p style="margin: 5px 0 0 0; font-size: 13px; color: #666;">Failed to check status</p>
-            `;
-        });
+            
+            statusDiv.innerHTML = statusHtml;
+        }
+    } catch (error) {
+        console.error('Error checking calendar status:', error);
+        statusDiv.innerHTML = `
+            <p style="margin: 0; color: #ef4444; font-weight: bold;">❌ Connection Error</p>
+            <p style="margin: 5px 0 0 0; font-size: 13px; color: #666;">Failed to check status</p>
+        `;
+    }
 }
 
-function loadCalendarsList() {
-    fetch('/api/commands/calendars', { headers: getHeaders() })
-        .then(res => res.json())
-        .then(data => {
-            const container = document.getElementById('calendarsList');
-            
-            if (!data.success) {
-                container.innerHTML = `<p style="padding: 15px; color: #94a3b8;">Calendar integration not configured</p>`;
-                return;
-            }
-            
-            if (data.calendars.length === 0) {
-                container.innerHTML = `<p style="padding: 15px; color: #94a3b8;">No calendars configured</p>`;
-                return;
-            }
-            
-            container.innerHTML = data.calendars.map((cal, index) => `
-                <div style="padding: 12px; background: #f8fafc; border-radius: 6px; margin-bottom: 8px;">
-                    <div style="display: flex; justify-content: space-between; align-items: center;">
-                        <div>
-                            <strong>${index + 1}. ${escapeHtml(cal.name)}</strong>
-                            <div style="font-size: 12px; color: #64748b; margin-top: 4px;">
-                                ID: <code style="background: #e2e8f0; padding: 2px 6px; border-radius: 3px;">${escapeHtml(cal.id)}</code>
-                            </div>
+async function loadCalendarsList() {
+    const container = document.getElementById('calendarsList');
+    container.innerHTML = '<div class="loading">Loading calendars...</div>';
+    
+    try {
+        const response = await apiRequest('/api/commands/calendars');
+        const data = await response.json();
+        
+        if (!data.success) {
+            container.innerHTML = `<p style="padding: 15px; color: #94a3b8;">Calendar integration not configured</p>`;
+            return;
+        }
+        
+        if (data.calendars.length === 0) {
+            container.innerHTML = `<p style="padding: 15px; color: #94a3b8;">No calendars configured</p>`;
+            return;
+        }
+        
+        container.innerHTML = data.calendars.map((cal, index) => `
+            <div style="padding: 12px; background: #f8fafc; border-radius: 6px; margin-bottom: 8px;">
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <div>
+                        <strong>${index + 1}. ${escapeHtml(cal.name)}</strong>
+                        <div style="font-size: 12px; color: #64748b; margin-top: 4px;">
+                            ID: <code style="background: #e2e8f0; padding: 2px 6px; border-radius: 3px;">${escapeHtml(cal.id)}</code>
                         </div>
                     </div>
                 </div>
-            `).join('');
-        })
-        .catch(err => {
-            console.error('Error loading calendars:', err);
-            document.getElementById('calendarsList').innerHTML = `<p style="padding: 15px; color: #ef4444;">Failed to load calendars</p>`;
-        });
+            </div>
+        `).join('');
+    } catch (error) {
+        console.error('Error loading calendars:', error);
+        container.innerHTML = `<p style="padding: 15px; color: #ef4444;">Failed to load calendars</p>`;
+    }
 }
 
-function syncCalendar() {
+async function syncCalendar() {
     const hoursAhead = parseInt(document.getElementById('syncHoursAhead').value) || 24;
     const filter = document.getElementById('syncFilter').value.trim();
     
     showAlert('syncStatusAlert', 'Syncing events from Google Calendar...', 'info');
     
-    fetch('/api/commands/sync', {
-        method: 'POST',
-        headers: getHeaders(),
-        body: JSON.stringify({ hoursAhead, filter: filter || null })
-    })
-    .then(res => res.json())
-    .then(data => {
+    try {
+        const response = await apiRequest('/api/commands/sync', {
+            method: 'POST',
+            body: JSON.stringify({ hoursAhead, filter: filter || null })
+        });
+        
+        const data = await response.json();
+        
         if (data.success) {
             showAlert('syncStatusAlert', `Successfully synced ${data.events.length} events from ${data.calendars.join(', ')}`, 'success');
             loadEvents();
@@ -667,114 +777,117 @@ function syncCalendar() {
         } else {
             showAlert('syncStatusAlert', 'Sync failed: ' + data.error, 'error');
         }
-    })
-    .catch(err => {
-        console.error('Error syncing calendar:', err);
+    } catch (error) {
+        console.error('Error syncing calendar:', error);
         showAlert('syncStatusAlert', 'Failed to sync calendar', 'error');
-    });
+    }
 }
 
-function getAutosyncStatus() {
-    fetch('/api/autosync/status', { headers: getHeaders() })
-        .then(res => res.json())
-        .then(data => {
-            const statusDiv = document.getElementById('autosyncStatus');
+async function getAutosyncStatus() {
+    const statusDiv = document.getElementById('autosyncStatus');
+    statusDiv.innerHTML = '<div class="loading">Loading...</div>';
+    
+    try {
+        const response = await apiRequest('/api/autosync/status');
+        const data = await response.json();
+        
+        if (data.success && data.autosync) {
+            let statusHtml = '';
             
-            if (data.success && data.autosync) {
-                let statusHtml = '';
-                
-                if (data.autosync.enabled) {
-                    statusHtml = `
-                        <p style="margin: 0; color: #22c55e; font-weight: bold;">✅ Enabled</p>
-                        <p style="margin: 5px 0 0 0; font-size: 13px; color: #666;">
-                            Checking every ${data.autosync.intervalFormatted || '5 minutes'}
-                        </p>
-                    `;
-                } else {
-                    statusHtml = `
-                        <p style="margin: 0; color: #94a3b8; font-weight: bold;">❌ Disabled</p>
-                        <p style="margin: 5px 0 0 0; font-size: 13px; color: #666;">
-                            ${data.autosync.message || 'Use /autosync action:on in Discord to enable'}
-                        </p>
-                    `;
-                }
-                
-                statusDiv.innerHTML = statusHtml;
+            if (data.autosync.enabled) {
+                statusHtml = `
+                    <p style="margin: 0; color: #22c55e; font-weight: bold;">✅ Enabled</p>
+                    <p style="margin: 5px 0 0 0; font-size: 13px; color: #666;">
+                        Checking every ${data.autosync.intervalFormatted || '5 minutes'}
+                    </p>
+                `;
+            } else {
+                statusHtml = `
+                    <p style="margin: 0; color: #94a3b8; font-weight: bold;">❌ Disabled</p>
+                    <p style="margin: 5px 0 0 0; font-size: 13px; color: #666;">
+                        ${data.autosync.message || 'Use /autosync action:on in Discord to enable'}
+                    </p>
+                `;
             }
-        })
-        .catch(err => {
-            console.error('Error getting autosync status:', err);
-            document.getElementById('autosyncStatus').innerHTML = `
-                <p style="margin: 0; color: #ef4444;">Error loading status</p>
-            `;
-        });
+            
+            statusDiv.innerHTML = statusHtml;
+        }
+    } catch (error) {
+        console.error('Error getting autosync status:', error);
+        statusDiv.innerHTML = `<p style="margin: 0; color: #ef4444;">Error loading status</p>`;
+    }
 }
 
 function toggleAutosync(enable) {
     const action = enable ? 'enable' : 'disable';
-    
     showAlert('autosyncStatusAlert', `This action must be performed in Discord. Use /autosync action:${enable ? 'on' : 'off'}`, 'info');
 }
 
 // ==================== SERVER SETTINGS ====================
-function loadGuildsForSettings() {
-    fetch('/api/guilds', { headers: getHeaders() })
-        .then(res => res.json())
-        .then(data => {
-            const select = document.getElementById('settingsGuildId');
-            
-            if (data.success && data.guilds.length > 0) {
-                select.innerHTML = '<option value="">-- Select a server --</option>';
-                data.guilds.forEach(guild => {
-                    const option = document.createElement('option');
-                    option.value = guild.id;
-                    option.textContent = `${guild.name} (${guild.memberCount || 0} members)`;
-                    select.appendChild(option);
-                });
-            } else {
-                select.innerHTML = '<option value="">No servers available</option>';
+async function loadGuildsForSettings() {
+    const select = document.getElementById('settingsGuildId');
+    select.innerHTML = '<option value="">Loading servers...</option>';
+    
+    try {
+        const response = await apiRequest('/api/guilds');
+        const data = await response.json();
+        
+        if (data.success && data.guilds && data.guilds.length > 0) {
+            select.innerHTML = '<option value="">-- Select a server --</option>';
+            data.guilds.forEach(guild => {
+                const option = document.createElement('option');
+                option.value = guild.id;
+                option.textContent = `${guild.name} (${guild.memberCount || 0} members)`;
+                select.appendChild(option);
+            });
+        } else {
+            select.innerHTML = '<option value="">No servers available</option>';
+            if (data.warning) {
+                showAlert('settingsAlert', data.warning, 'warning');
             }
-        })
-        .catch(err => {
-            console.error('Error loading guilds:', err);
-            document.getElementById('settingsGuildId').innerHTML = '<option value="">Error loading servers</option>';
-        });
+        }
+    } catch (error) {
+        console.error('Error loading guilds:', error);
+        select.innerHTML = '<option value="">Error loading servers</option>';
+    }
 }
 
-function loadGuildSettings(guildId) {
+async function loadGuildSettings(guildId) {
     if (!guildId) {
         document.getElementById('settingsContent').classList.add('hidden');
-        document.getElementById('noGuildSelected').style.display = 'block';
+        const noGuildEl = document.getElementById('noGuildSelected');
+        if (noGuildEl) noGuildEl.style.display = 'block';
         currentGuildId = null;
         return;
     }
     
     currentGuildId = guildId;
     document.getElementById('settingsContent').classList.remove('hidden');
-    document.getElementById('noGuildSelected').style.display = 'none';
+    const noGuildEl = document.getElementById('noGuildSelected');
+    if (noGuildEl) noGuildEl.style.display = 'none';
     
-    // Load event channel setting
-    fetch(`/api/event-channel/${guildId}`, { headers: getHeaders() })
-        .then(res => res.json())
-        .then(data => {
-            if (data.success) {
-                document.getElementById('eventChannelInput').value = data.channelId || '';
-            }
-        })
-        .catch(err => console.error('Error loading event channel:', err));
-    
-    // Load notification channel setting
-    fetch(`/api/streaming/${guildId}`, { headers: getHeaders() })
-        .then(res => res.json())
-        .then(data => {
-            if (data.success) {
-                document.getElementById('notificationChannelInput').value = data.config.notificationChannelId || '';
-            }
-        })
-        .catch(err => console.error('Error loading notification channel:', err));
+    try {
+        // Load event channel setting
+        const eventChannelResponse = await apiRequest(`/api/event-channel/${guildId}`);
+        const eventChannelData = await eventChannelResponse.json();
+        
+        if (eventChannelData.success) {
+            document.getElementById('eventChannelInput').value = eventChannelData.channelId || '';
+        }
+        
+        // Load notification channel setting
+        const streamingResponse = await apiRequest(`/api/streaming/${guildId}`);
+        const streamingData = await streamingResponse.json();
+        
+        if (streamingData.success) {
+            document.getElementById('notificationChannelInput').value = streamingData.config.notificationChannelId || '';
+        }
+    } catch (error) {
+        console.error('Error loading guild settings:', error);
+    }
 }
 
-function saveEventChannel() {
+async function saveEventChannel() {
     if (!currentGuildId) {
         showAlert('eventChannelStatus', 'Please select a server first', 'error');
         return;
@@ -787,26 +900,26 @@ function saveEventChannel() {
         return;
     }
     
-    fetch(`/api/event-channel/${currentGuildId}`, {
-        method: 'POST',
-        headers: getHeaders(),
-        body: JSON.stringify({ channelId })
-    })
-    .then(res => res.json())
-    .then(data => {
+    try {
+        const response = await apiRequest(`/api/event-channel/${currentGuildId}`, {
+            method: 'POST',
+            body: JSON.stringify({ channelId })
+        });
+        
+        const data = await response.json();
+        
         if (data.success) {
             showAlert('eventChannelStatus', 'Event channel set successfully!', 'success');
         } else {
             showAlert('eventChannelStatus', 'Failed to set event channel: ' + data.error, 'error');
         }
-    })
-    .catch(err => {
-        console.error('Error saving event channel:', err);
+    } catch (error) {
+        console.error('Error saving event channel:', error);
         showAlert('eventChannelStatus', 'Failed to save event channel', 'error');
-    });
+    }
 }
 
-function clearEventChannel() {
+async function clearEventChannel() {
     if (!currentGuildId) {
         showAlert('eventChannelStatus', 'Please select a server first', 'error');
         return;
@@ -814,96 +927,26 @@ function clearEventChannel() {
     
     if (!confirm('Are you sure you want to clear the event channel?')) return;
     
-    fetch(`/api/event-channel/${currentGuildId}`, {
-        method: 'DELETE',
-        headers: getHeaders()
-    })
-    .then(res => res.json())
-    .then(data => {
+    try {
+        const response = await apiRequest(`/api/event-channel/${currentGuildId}`, {
+            method: 'DELETE'
+        });
+        
+        const data = await response.json();
+        
         if (data.success) {
             document.getElementById('eventChannelInput').value = '';
             showAlert('eventChannelStatus', 'Event channel cleared!', 'success');
         } else {
             showAlert('eventChannelStatus', 'Failed to clear event channel: ' + data.error, 'error');
         }
-    })
-    .catch(err => {
-        console.error('Error clearing event channel:', err);
+    } catch (error) {
+        console.error('Error clearing event channel:', error);
         showAlert('eventChannelStatus', 'Failed to clear event channel', 'error');
-    });
-}
-
-// ==================== STREAMING ====================
-function loadGuildsForStreaming() {
-    fetch('/api/guilds', { headers: getHeaders() })
-        .then(res => res.json())
-        .then(data => {
-            const select = document.getElementById('streamingGuildId');
-            
-            if (data.success && data.guilds.length > 0) {
-                select.innerHTML = '<option value="">-- Select a server --</option>';
-                data.guilds.forEach(guild => {
-                    const option = document.createElement('option');
-                    option.value = guild.id;
-                    option.textContent = `${guild.name} (${guild.memberCount || 0} members)`;
-                    select.appendChild(option);
-                });
-            } else {
-                select.innerHTML = '<option value="">No servers available</option>';
-            }
-        })
-        .catch(err => {
-            console.error('Error loading guilds:', err);
-            document.getElementById('streamingGuildId').innerHTML = '<option value="">Error loading servers</option>';
-        });
-}
-
-function loadStreamingSettings(guildId) {
-    if (!guildId) {
-        document.getElementById('streamingContent').classList.add('hidden');
-        document.getElementById('noStreamingGuildSelected').style.display = 'block';
-        currentStreamingGuildId = null;
-        return;
     }
-    
-    currentStreamingGuildId = guildId;
-    document.getElementById('streamingContent').classList.remove('hidden');
-    document.getElementById('noStreamingGuildSelected').style.display = 'none';
-    
-    // Load streaming config
-    fetch(`/api/streaming/${guildId}`, { headers: getHeaders() })
-        .then(res => res.json())
-        .then(data => {
-            if (data.success) {
-                // Load Twitch streamers
-                const twitchContainer = document.getElementById('twitchContainer');
-                twitchContainer.innerHTML = '';
-                
-                if (data.config.twitch.streamers.length > 0) {
-                    data.config.twitch.streamers.forEach(username => {
-                        addTwitchRow(username);
-                    });
-                } else {
-                    addTwitchRow();
-                }
-                
-                // Load YouTube channels
-                const youtubeContainer = document.getElementById('youtubeContainer');
-                youtubeContainer.innerHTML = '';
-                
-                if (data.config.youtube.channels.length > 0) {
-                    data.config.youtube.channels.forEach(channelId => {
-                        addYouTubeRow(channelId);
-                    });
-                } else {
-                    addYouTubeRow();
-                }
-            }
-        })
-        .catch(err => console.error('Error loading streaming settings:', err));
 }
 
-function saveNotificationChannel() {
+async function saveNotificationChannel() {
     if (!currentGuildId) {
         showAlert('notificationStatus', 'Please select a server first', 'error');
         return;
@@ -916,23 +959,97 @@ function saveNotificationChannel() {
         return;
     }
     
-    fetch(`/api/streaming/${currentGuildId}/channel`, {
-        method: 'POST',
-        headers: getHeaders(),
-        body: JSON.stringify({ channelId })
-    })
-    .then(res => res.json())
-    .then(data => {
+    try {
+        const response = await apiRequest(`/api/streaming/${currentGuildId}/channel`, {
+            method: 'POST',
+            body: JSON.stringify({ channelId })
+        });
+        
+        const data = await response.json();
+        
         if (data.success) {
             showAlert('notificationStatus', 'Notification channel set!', 'success');
         } else {
             showAlert('notificationStatus', 'Failed to set channel: ' + data.error, 'error');
         }
-    })
-    .catch(err => {
-        console.error('Error saving notification channel:', err);
+    } catch (error) {
+        console.error('Error saving notification channel:', error);
         showAlert('notificationStatus', 'Failed to save channel', 'error');
-    });
+    }
+}
+
+// ==================== STREAMING ====================
+async function loadGuildsForStreaming() {
+    const select = document.getElementById('streamingGuildId');
+    select.innerHTML = '<option value="">Loading servers...</option>';
+    
+    try {
+        const response = await apiRequest('/api/guilds');
+        const data = await response.json();
+        
+        if (data.success && data.guilds && data.guilds.length > 0) {
+            select.innerHTML = '<option value="">-- Select a server --</option>';
+            data.guilds.forEach(guild => {
+                const option = document.createElement('option');
+                option.value = guild.id;
+                option.textContent = `${guild.name} (${guild.memberCount || 0} members)`;
+                select.appendChild(option);
+            });
+        } else {
+            select.innerHTML = '<option value="">No servers available</option>';
+        }
+    } catch (error) {
+        console.error('Error loading guilds:', error);
+        select.innerHTML = '<option value="">Error loading servers</option>';
+    }
+}
+
+async function loadStreamingSettings(guildId) {
+    if (!guildId) {
+        document.getElementById('streamingContent').classList.add('hidden');
+        const noStreamingEl = document.getElementById('noStreamingGuildSelected');
+        if (noStreamingEl) noStreamingEl.style.display = 'block';
+        currentStreamingGuildId = null;
+        return;
+    }
+    
+    currentStreamingGuildId = guildId;
+    document.getElementById('streamingContent').classList.remove('hidden');
+    const noStreamingEl = document.getElementById('noStreamingGuildSelected');
+    if (noStreamingEl) noStreamingEl.style.display = 'none';
+    
+    try {
+        const response = await apiRequest(`/api/streaming/${guildId}`);
+        const data = await response.json();
+        
+        if (data.success) {
+            // Load Twitch streamers
+            const twitchContainer = document.getElementById('twitchContainer');
+            twitchContainer.innerHTML = '';
+            
+            if (data.config.twitch.streamers.length > 0) {
+                data.config.twitch.streamers.forEach(username => {
+                    addTwitchRow(username);
+                });
+            } else {
+                addTwitchRow();
+            }
+            
+            // Load YouTube channels
+            const youtubeContainer = document.getElementById('youtubeContainer');
+            youtubeContainer.innerHTML = '';
+            
+            if (data.config.youtube.channels.length > 0) {
+                data.config.youtube.channels.forEach(channelId => {
+                    addYouTubeRow(channelId);
+                });
+            } else {
+                addYouTubeRow();
+            }
+        }
+    } catch (error) {
+        console.error('Error loading streaming settings:', error);
+    }
 }
 
 function addTwitchRow(username = '') {
@@ -963,7 +1080,6 @@ function saveTwitchConfig() {
         return;
     }
     
-    // Note: This is a simplified version - full implementation would handle adding/removing individually
     showAlert('twitchStatus', `Twitch configuration saved (${usernames.length} streamers). Note: Use Discord commands for full control.`, 'success');
 }
 
@@ -995,91 +1111,90 @@ function saveYouTubeConfig() {
         return;
     }
     
-    // Note: This is a simplified version - full implementation would handle adding/removing individually
     showAlert('youtubeStatus', `YouTube configuration saved (${channels.length} channels). Note: Use Discord commands for full control.`, 'success');
 }
 
 // ==================== BOT CONTROL ====================
-function loadBotStatus() {
+async function loadBotStatus() {
     const container = document.getElementById('botStatusInfo');
     container.innerHTML = '<div class="loading">Loading bot status...</div>';
     
-    fetch('/api/bot/status', { headers: getHeaders() })
-        .then(res => res.json())
-        .then(data => {
-            if (data.success && data.status) {
-                const status = data.status;
-                container.innerHTML = `
-                    <div style="display: grid; gap: 12px;">
-                        ${status.botName ? `<div><strong>Bot:</strong> ${status.botName}</div>` : ''}
-                        <div><strong>Uptime:</strong> ${status.uptimeFormatted || 'Unknown'}</div>
-                        <div><strong>Servers:</strong> ${status.guildCount || 0}</div>
-                        <div><strong>Node Version:</strong> ${status.nodeVersion || 'Unknown'}</div>
-                        <div><strong>Last Update:</strong> ${status.timestamp ? new Date(status.timestamp).toLocaleString() : 'Unknown'}</div>
-                        ${status.warning ? `<div style="color: #f59e0b; margin-top: 8px;">${status.warning}</div>` : ''}
-                    </div>
-                `;
-            } else {
-                container.innerHTML = '<div style="color: #ef4444;">Failed to load bot status</div>';
-            }
-        })
-        .catch(err => {
-            console.error('Error loading bot status:', err);
-            container.innerHTML = '<div style="color: #ef4444;">Error loading bot status</div>';
-        });
+    try {
+        const response = await apiRequest('/api/bot/status');
+        const data = await response.json();
+        
+        if (data.success && data.status) {
+            const status = data.status;
+            container.innerHTML = `
+                <div style="display: grid; gap: 12px;">
+                    ${status.botName ? `<div><strong>Bot:</strong> ${status.botName}</div>` : ''}
+                    <div><strong>Uptime:</strong> ${status.uptimeFormatted || 'Unknown'}</div>
+                    <div><strong>Servers:</strong> ${status.guildCount || 0}</div>
+                    <div><strong>Node Version:</strong> ${status.nodeVersion || 'Unknown'}</div>
+                    <div><strong>Last Update:</strong> ${status.timestamp ? new Date(status.timestamp).toLocaleString() : 'Unknown'}</div>
+                    ${status.warning ? `<div style="color: #f59e0b; margin-top: 8px;">${status.warning}</div>` : ''}
+                </div>
+            `;
+        } else {
+            container.innerHTML = '<div style="color: #ef4444;">Failed to load bot status</div>';
+        }
+    } catch (error) {
+        console.error('Error loading bot status:', error);
+        container.innerHTML = '<div style="color: #ef4444;">Error loading bot status</div>';
+    }
     
     loadBotConfig();
 }
 
-function loadBotConfig() {
+async function loadBotConfig() {
     const container = document.getElementById('botConfigInfo');
     container.innerHTML = '<div class="loading">Loading configuration...</div>';
     
-    fetch('/api/config', { headers: getHeaders() })
-        .then(res => res.json())
-        .then(data => {
-            if (data.success && data.config) {
-                const config = data.config;
-                container.innerHTML = `
-                    <div style="display: grid; gap: 12px;">
-                        <div><strong>Google Calendar:</strong> ${config.google?.enabled ? '✅ Enabled' : '❌ Disabled'}</div>
-                        <div><strong>Twitch:</strong> ${config.twitch?.enabled ? '✅ Enabled' : '❌ Disabled'}</div>
-                        <div><strong>Web Port:</strong> ${config.web?.port || 3000}</div>
-                        <div><strong>Auto-Sync Interval:</strong> ${config.bot?.autoSyncInterval ? (config.bot.autoSyncInterval / 60000) + ' minutes' : 'Unknown'}</div>
-                    </div>
-                `;
-            } else {
-                container.innerHTML = '<div style="color: #ef4444;">Failed to load configuration</div>';
-            }
-        })
-        .catch(err => {
-            console.error('Error loading config:', err);
-            container.innerHTML = '<div style="color: #ef4444;">Error loading configuration</div>';
-        });
+    try {
+        const response = await apiRequest('/api/config');
+        const data = await response.json();
+        
+        if (data.success && data.config) {
+            const config = data.config;
+            container.innerHTML = `
+                <div style="display: grid; gap: 12px;">
+                    <div><strong>Google Calendar:</strong> ${config.google?.enabled ? '✅ Enabled' : '❌ Disabled'}</div>
+                    <div><strong>Twitch:</strong> ${config.twitch?.enabled ? '✅ Enabled' : '❌ Disabled'}</div>
+                    <div><strong>Web Port:</strong> ${config.web?.port || 3000}</div>
+                    <div><strong>Auto-Sync Interval:</strong> ${config.bot?.autoSyncInterval ? (config.bot.autoSyncInterval / 60000) + ' minutes' : 'Unknown'}</div>
+                </div>
+            `;
+        } else {
+            container.innerHTML = '<div style="color: #ef4444;">Failed to load configuration</div>';
+        }
+    } catch (error) {
+        console.error('Error loading config:', error);
+        container.innerHTML = '<div style="color: #ef4444;">Error loading configuration</div>';
+    }
 }
 
-function restartBot() {
-    if (!confirm('Are you sure you want to restart the Discord bot? This will disconnect and reconnect the bot.')) return;
+async function restartBot() {
+    if (!confirm('Are you sure you want to restart the Discord bot?')) return;
     
     showAlert('botControlAlert', 'Restarting bot...', 'info');
     
-    fetch('/api/bot/restart', {
-        method: 'POST',
-        headers: getHeaders()
-    })
-    .then(res => res.json())
-    .then(data => {
+    try {
+        const response = await apiRequest('/api/bot/restart', {
+            method: 'POST'
+        });
+        
+        const data = await response.json();
+        
         if (data.success) {
             showAlert('botControlAlert', 'Bot restart initiated! Refreshing status in 10 seconds...', 'success');
             setTimeout(() => loadBotStatus(), 10000);
         } else {
             showAlert('botControlAlert', data.error || 'Failed to restart bot', 'error');
         }
-    })
-    .catch(err => {
-        console.error('Error restarting bot:', err);
+    } catch (error) {
+        console.error('Error restarting bot:', error);
         showAlert('botControlAlert', 'Failed to restart bot', 'error');
-    });
+    }
 }
 
 function reloadCommands() {
@@ -1087,23 +1202,23 @@ function reloadCommands() {
 }
 
 // ==================== COMMANDS ====================
-function loadCommands() {
+async function loadCommands() {
     const container = document.getElementById('commandsList');
     container.innerHTML = '<div class="loading">Loading commands...</div>';
     
-    fetch('/api/commands/list', { headers: getHeaders() })
-        .then(res => res.json())
-        .then(data => {
-            if (data.success) {
-                displayCommands(data.commands);
-            } else {
-                container.innerHTML = '<div style="color: #ef4444;">Failed to load commands</div>';
-            }
-        })
-        .catch(err => {
-            console.error('Error loading commands:', err);
-            container.innerHTML = '<div style="color: #ef4444;">Error loading commands</div>';
-        });
+    try {
+        const response = await apiRequest('/api/commands/list');
+        const data = await response.json();
+        
+        if (data.success) {
+            displayCommands(data.commands);
+        } else {
+            container.innerHTML = '<div style="color: #ef4444;">Failed to load commands</div>';
+        }
+    } catch (error) {
+        console.error('Error loading commands:', error);
+        container.innerHTML = '<div style="color: #ef4444;">Error loading commands</div>';
+    }
 }
 
 function displayCommands(commands) {
@@ -1142,13 +1257,6 @@ function displayCommands(commands) {
                             <div>
                                 <strong style="color: #5865F2;">/${cmd.name}</strong>
                                 <p style="margin: 5px 0; color: #64748b; font-size: 14px;">${cmd.description}</p>
-                                ${cmd.options && cmd.options.length > 0 ? `
-                                    <div style="margin-top: 8px; font-size: 13px; color: #94a3b8;">
-                                        Options: ${cmd.options.map(opt => 
-                                            `<code style="background: #f1f5f9; padding: 2px 6px; border-radius: 3px; margin-right: 6px;">${opt.name}${opt.required ? '*' : ''}</code>`
-                                        ).join('')}
-                                    </div>
-                                ` : ''}
                             </div>
                         </div>
                     </div>
@@ -1179,16 +1287,14 @@ function escapeHtml(text) {
 }
 
 // ==================== INITIALIZATION ====================
-document.addEventListener('DOMContentLoaded', () => {
-    // Check if API key exists
-    if (API_KEY) {
-        updateAuthStatus(true);
+document.addEventListener('DOMContentLoaded', async () => {
+    createLoginPopup();
+    const isAuthenticated = await checkSession();
+    
+    if (isAuthenticated) {
         loadDashboard();
-    } else {
-        updateAuthStatus(false);
     }
     
-    // Set default datetime to now + 1 hour
     const now = new Date();
     now.setHours(now.getHours() + 1);
     const dateTimeString = now.toISOString().slice(0, 16);

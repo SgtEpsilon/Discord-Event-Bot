@@ -1,4 +1,4 @@
-// web-server.js - Complete implementation with bidirectional sync and Calendar Management
+// web-server.js - Complete implementation with username/password authentication
 const express = require('express');
 const path = require('path');
 const cors = require('cors');
@@ -21,27 +21,57 @@ app.use(cors());
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
-function verifyApiKey() {
-  const apiKeyFromEnv = process.env.WEB_API_KEY;
-  const apiKeyFromConfig = config.web?.apiKey;
-  const validApiKey = apiKeyFromEnv || apiKeyFromConfig;
+// ==================== SESSION MANAGEMENT ====================
 
+// Session storage (in production, use Redis or database)
+const sessions = new Map();
+
+// Generate session token
+function generateSessionToken() {
+  return crypto.randomBytes(32).toString('hex');
+}
+
+// Get credentials from environment
+function getCredentials() {
+  const username = process.env.WEB_USERNAME || 'admin';
+  const password = process.env.WEB_PASSWORD || 'admin';
+  return { username, password };
+}
+
+// Verify session token
+function verifySession() {
   return (req, res, next) => {
-    if (!validApiKey) return next();
+    const token = req.headers['x-session-token'] || req.headers['authorization']?.replace('Bearer ', '');
     
-    const apiKey = req.headers['x-api-key'] || req.headers['authorization']?.replace('Bearer ', '');
-    if (!apiKey) {
-      return res.status(401).json({ success: false, error: 'Missing authentication header' });
+    if (!token) {
+      return res.status(401).json({ success: false, error: 'Not authenticated' });
     }
 
-    const keyBuf = Buffer.from(apiKey);
-    const validKeyBuf = Buffer.from(validApiKey);
-    if (keyBuf.length !== validKeyBuf.length || !crypto.timingSafeEqual(keyBuf, validKeyBuf)) {
-      return res.status(401).json({ success: false, error: 'Invalid API key' });
+    const session = sessions.get(token);
+    if (!session) {
+      return res.status(401).json({ success: false, error: 'Invalid or expired session' });
     }
+
+    // Check if session has expired (24 hours)
+    if (Date.now() - session.createdAt > 24 * 60 * 60 * 1000) {
+      sessions.delete(token);
+      return res.status(401).json({ success: false, error: 'Session expired' });
+    }
+
+    req.user = session.user;
     next();
   };
 }
+
+// Clean up expired sessions periodically
+setInterval(() => {
+  const now = Date.now();
+  for (const [token, session] of sessions.entries()) {
+    if (now - session.createdAt > 24 * 60 * 60 * 1000) {
+      sessions.delete(token);
+    }
+  }
+}, 60 * 60 * 1000); // Clean up every hour
 
 // Initialize services
 const calendarService = new CalendarService(config.google.credentials, config.google.calendars);
@@ -75,30 +105,99 @@ function saveCalendarConfig(configData) {
   fs.writeFileSync(calendarConfigPath, JSON.stringify(configData, null, 2), 'utf8');
 }
 
-// Public endpoints
-app.post('/api/verify-key', (req, res) => {
-  const { apiKey } = req.body;
-  if (!apiKey) return res.status(400).json({ success: false, error: 'API key required' });
-  
-  const validApiKey = process.env.WEB_API_KEY || config.web?.apiKey;
-  if (!validApiKey) {
-    return res.status(500).json({ 
-      success: false, 
-      error: 'API authentication not configured. Set WEB_API_KEY in .env' 
+// ==================== PUBLIC AUTHENTICATION ENDPOINTS ====================
+
+// Login endpoint
+app.post('/api/auth/login', (req, res) => {
+  try {
+    const { username, password } = req.body;
+    
+    if (!username || !password) {
+      return res.status(400).json({ success: false, error: 'Username and password required' });
+    }
+
+    const credentials = getCredentials();
+    
+    // Timing-safe comparison to prevent timing attacks
+    const usernameMatch = crypto.timingSafeEqual(
+      Buffer.from(username),
+      Buffer.from(credentials.username)
+    );
+    const passwordMatch = crypto.timingSafeEqual(
+      Buffer.from(password),
+      Buffer.from(credentials.password)
+    );
+
+    if (!usernameMatch || !passwordMatch) {
+      return res.status(401).json({ success: false, error: 'Invalid username or password' });
+    }
+
+    // Generate session token
+    const sessionToken = generateSessionToken();
+    sessions.set(sessionToken, {
+      user: username,
+      createdAt: Date.now()
     });
+
+    res.json({
+      success: true,
+      message: 'Login successful',
+      sessionToken,
+      user: username
+    });
+  } catch (error) {
+    console.error('Login error:', error);
+    res.status(500).json({ success: false, error: 'Login failed' });
   }
-  
-  const keyBuf = Buffer.from(apiKey);
-  const validKeyBuf = Buffer.from(validApiKey);
-  if (keyBuf.length !== validKeyBuf.length || !crypto.timingSafeEqual(keyBuf, validKeyBuf)) {
-    return res.status(401).json({ success: false, error: 'Invalid API key' });
-  }
-  
-  res.json({ success: true, message: 'API key verified' });
 });
 
-// Protected endpoints
-app.use('/api', verifyApiKey());
+// Logout endpoint
+app.post('/api/auth/logout', (req, res) => {
+  try {
+    const token = req.headers['x-session-token'] || req.headers['authorization']?.replace('Bearer ', '');
+    
+    if (token && sessions.has(token)) {
+      sessions.delete(token);
+    }
+
+    res.json({ success: true, message: 'Logged out successfully' });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Check session endpoint
+app.get('/api/auth/check', (req, res) => {
+  try {
+    const token = req.headers['x-session-token'] || req.headers['authorization']?.replace('Bearer ', '');
+    
+    if (!token) {
+      return res.json({ success: true, authenticated: false });
+    }
+
+    const session = sessions.get(token);
+    if (!session) {
+      return res.json({ success: true, authenticated: false });
+    }
+
+    // Check if expired
+    if (Date.now() - session.createdAt > 24 * 60 * 60 * 1000) {
+      sessions.delete(token);
+      return res.json({ success: true, authenticated: false });
+    }
+
+    res.json({
+      success: true,
+      authenticated: true,
+      user: session.user
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// ==================== PROTECTED ENDPOINTS ====================
+app.use('/api', verifySession());
 
 app.get('/api/health', (req, res) => {
   res.json({ success: true, status: 'healthy', timestamp: new Date().toISOString() });
@@ -326,17 +425,15 @@ app.post('/api/events/from-preset', async (req, res) => {
   }
 });
 
-// ==================== STATS ENDPOINT (DYNAMIC) ====================
+// ==================== STATS ENDPOINT ====================
 app.get('/api/stats', (req, res) => {
   try {
     const allEvents = eventManager.getAllEvents();
     const eventList = Object.values(allEvents);
     
-    // Calculate upcoming events (events in the future)
     const now = new Date();
     const upcomingEvents = eventList.filter(event => new Date(event.dateTime) > now);
     
-    // Calculate total signups across all events
     const totalSignups = eventList.reduce((sum, event) => {
       const eventSignups = Object.values(event.signups || {}).reduce((s, arr) => s + arr.length, 0);
       return sum + eventSignups;
@@ -368,8 +465,7 @@ app.get('/api/guilds', (req, res) => {
     }
     
     const guilds = JSON.parse(fs.readFileSync(guildListPath, 'utf8'));
-    const filtered = guilds.filter(g => !g.name.includes('(_comm)') && !g.name.includes('(_sche)'));
-    res.json({ success: true, guilds: filtered });
+    res.json({ success: true, guilds });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
@@ -383,13 +479,12 @@ app.get('/api/guilds/:guildId/channels', (req, res) => {
       return res.json({ 
         success: true, 
         channels: [],
-        warning: 'Channel list not available. Bot will generate on next startup.'
+        warning: 'Channel list not available.'
       });
     }
     
     const allChannels = JSON.parse(fs.readFileSync(channelListPath, 'utf8'));
     const guildChannels = allChannels[req.params.guildId] || [];
-    
     const textChannels = guildChannels.filter(ch => ch.type === 0);
     
     res.json({ success: true, channels: textChannels });
@@ -451,194 +546,17 @@ app.post('/api/streaming/:guildId/channel', (req, res) => {
   }
 });
 
-app.post('/api/streaming/:guildId/twitch', (req, res) => {
-  try {
-    const { username, customMessage } = req.body;
-    if (!username) return res.status(400).json({ success: false, error: 'username required' });
-    
-    streamingConfig.addTwitchStreamer(req.params.guildId, username, customMessage);
-    res.json({ success: true, message: `Twitch streamer "${username}" added`, guildId: req.params.guildId, username });
-  } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
-  }
-});
-
-app.delete('/api/streaming/:guildId/twitch/:username', (req, res) => {
-  try {
-    streamingConfig.removeTwitchStreamer(req.params.guildId, req.params.username);
-    res.json({ success: true, message: `Twitch streamer "${req.params.username}" removed`, guildId: req.params.guildId, username: req.params.username });
-  } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
-  }
-});
-
-app.post('/api/streaming/:guildId/youtube', (req, res) => {
-  try {
-    const { channelId } = req.body;
-    if (!channelId) return res.status(400).json({ success: false, error: 'channelId required' });
-    
-    streamingConfig.addYouTubeChannel(req.params.guildId, channelId);
-    res.json({ success: true, message: 'YouTube channel added', guildId: req.params.guildId, channelId });
-  } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
-  }
-});
-
-app.delete('/api/streaming/:guildId/youtube/:channelId', (req, res) => {
-  try {
-    streamingConfig.removeYouTubeChannel(req.params.guildId, req.params.channelId);
-    res.json({ success: true, message: 'YouTube channel removed', guildId: req.params.guildId, channelId: req.params.channelId });
-  } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
-  }
-});
-
-app.get('/api/streaming/all', (req, res) => {
-  try {
-    const configs = streamingConfig.getAllGuildConfigs();
-    res.json({ success: true, configs, count: Object.keys(configs).length });
-  } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
-  }
-});
-
-// ==================== GOOGLE CALENDAR MANAGEMENT ====================
-
-// Get all calendar integrations
-app.get('/api/calendar/integrations', (req, res) => {
-  try {
-    const calendarConfig = loadCalendarConfig();
-    res.json({ success: true, calendars: calendarConfig.calendars || [] });
-  } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
-  }
-});
-
-// Add new calendar integration
-app.post('/api/calendar/integrations', (req, res) => {
-  try {
-    const { name, calendarId, credentials } = req.body;
-    
-    if (!name || !calendarId) {
-      return res.status(400).json({ success: false, error: 'Name and calendarId are required' });
-    }
-    
-    const calendarConfig = loadCalendarConfig();
-    
-    // Check if calendar ID already exists
-    if (calendarConfig.calendars.some(cal => cal.id === calendarId)) {
-      return res.status(400).json({ success: false, error: 'Calendar ID already exists' });
-    }
-    
-    // Add new calendar
-    const newCalendar = {
-      name,
-      id: calendarId,
-      credentials: credentials || null,
-      addedAt: new Date().toISOString()
-    };
-    
-    calendarConfig.calendars.push(newCalendar);
-    saveCalendarConfig(calendarConfig);
-    
-    res.json({ success: true, message: 'Calendar integration added', calendar: newCalendar });
-  } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
-  }
-});
-
-// Update calendar integration
-app.put('/api/calendar/integrations/:calendarId', (req, res) => {
-  try {
-    const { name, credentials } = req.body;
-    const calendarConfig = loadCalendarConfig();
-    
-    const calendarIndex = calendarConfig.calendars.findIndex(cal => cal.id === req.params.calendarId);
-    
-    if (calendarIndex === -1) {
-      return res.status(404).json({ success: false, error: 'Calendar not found' });
-    }
-    
-    if (name) calendarConfig.calendars[calendarIndex].name = name;
-    if (credentials !== undefined) calendarConfig.calendars[calendarIndex].credentials = credentials;
-    calendarConfig.calendars[calendarIndex].updatedAt = new Date().toISOString();
-    
-    saveCalendarConfig(calendarConfig);
-    
-    res.json({ success: true, message: 'Calendar integration updated', calendar: calendarConfig.calendars[calendarIndex] });
-  } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
-  }
-});
-
-// Delete calendar integration
-app.delete('/api/calendar/integrations/:calendarId', (req, res) => {
-  try {
-    const calendarConfig = loadCalendarConfig();
-    
-    const calendarIndex = calendarConfig.calendars.findIndex(cal => cal.id === req.params.calendarId);
-    
-    if (calendarIndex === -1) {
-      return res.status(404).json({ success: false, error: 'Calendar not found' });
-    }
-    
-    const deletedCalendar = calendarConfig.calendars[calendarIndex];
-    calendarConfig.calendars.splice(calendarIndex, 1);
-    
-    saveCalendarConfig(calendarConfig);
-    
-    res.json({ success: true, message: 'Calendar integration deleted', calendar: deletedCalendar });
-  } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
-  }
-});
-
-// Test calendar connection
-app.post('/api/calendar/test/:calendarId', async (req, res) => {
-  try {
-    const calendarConfig = loadCalendarConfig();
-    const calendar = calendarConfig.calendars.find(cal => cal.id === req.params.calendarId);
-    
-    if (!calendar) {
-      return res.status(404).json({ success: false, error: 'Calendar not found' });
-    }
-    
-    // Create a temporary calendar service to test
-    const testService = new CalendarService(
-      calendar.credentials || config.google.credentials,
-      [{ name: calendar.name, id: calendar.id }]
-    );
-    
-    const isConnected = await testService.testConnection();
-    
-    res.json({ 
-      success: true, 
-      connected: isConnected,
-      message: isConnected ? 'Calendar connection successful' : 'Calendar connection failed'
-    });
-  } catch (error) {
-    res.status(500).json({ success: false, error: error.message, connected: false });
-  }
-});
-
-// ==================== CALENDAR SYNC ENDPOINTS ====================
+// ==================== CALENDAR ENDPOINTS ====================
 app.get('/api/calendar/status', (req, res) => {
   try {
     const enabled = calendarService.isEnabled();
     let status = 'disabled', message = 'Google Calendar not configured';
     
     if (enabled) {
-      try {
-        calendarService.testConnection();
-        status = 'connected';
-        message = 'Google Calendar is connected and ready';
-      } catch (error) {
-        status = 'error';
-        message = 'Connection failed: ' + error.message;
-      }
+      status = 'connected';
+      message = 'Google Calendar is connected and ready';
     }
 
-    // Read bot status to get autosync info
     let autosyncInfo = { enabled: false, interval: 'Unknown' };
     try {
       const botStatusPath = path.join(__dirname, 'data', 'bot-status.json');
@@ -648,9 +566,7 @@ app.get('/api/calendar/status', (req, res) => {
           autosyncInfo = botStatus.autoSync;
         }
       }
-    } catch (e) {
-      // Ignore errors reading bot status
-    }
+    } catch (e) {}
 
     res.json({ success: true, status, message, enabled, autosync: autosyncInfo });
   } catch (error) {
@@ -674,54 +590,9 @@ app.post('/api/commands/sync', async (req, res) => {
 
     res.json({ 
       success: true, 
-      message: `Synced ${result.events.length} events from ${result.calendars.join(', ')}`, 
+      message: `Synced ${result.events.length} events`, 
       events: result.events,
       calendars: result.calendars
-    });
-  } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
-  }
-});
-
-// Manual trigger sync from web UI (force immediate sync in bot)
-app.post('/api/calendar/trigger-sync', async (req, res) => {
-  try {
-    if (!calendarService.isEnabled()) {
-      return res.status(400).json({ success: false, error: 'Google Calendar not configured' });
-    }
-
-    // Read bot status to check if autosync is enabled
-    const botStatusPath = path.join(__dirname, 'data', 'bot-status.json');
-    let autosyncEnabled = false;
-    let channelId = null;
-    let guildId = null;
-
-    if (fs.existsSync(botStatusPath)) {
-      const botStatus = JSON.parse(fs.readFileSync(botStatusPath, 'utf8'));
-      if (botStatus.autoSync) {
-        autosyncEnabled = botStatus.autoSync.enabled;
-        channelId = botStatus.autoSync.channelId;
-        guildId = botStatus.autoSync.guildId;
-      }
-    }
-
-    if (!autosyncEnabled) {
-      return res.status(400).json({ 
-        success: false, 
-        error: 'Auto-sync is not enabled. Use /autosync action:on in Discord first.' 
-      });
-    }
-
-    // Perform manual sync
-    const hours = parseInt(req.body.hoursAhead) || 168;
-    const filter = req.body.filter || null;
-    const result = await calendarService.syncEvents(hours, filter);
-
-    res.json({
-      success: true,
-      message: `Manual sync triggered. Found ${result.events.length} events.`,
-      events: result.events,
-      note: 'Events will be posted to Discord by the bot automatically.'
     });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
@@ -742,19 +613,16 @@ app.get('/api/commands/calendars', (req, res) => {
 
 app.get('/api/autosync/status', (req, res) => {
   try {
-    // Read bot status file to get autosync info
     const botStatusPath = path.join(__dirname, 'data', 'bot-status.json');
     
     if (!fs.existsSync(botStatusPath)) {
-      // Bot status file doesn't exist - bot might not be running
       return res.json({
         success: true,
         autosync: {
           enabled: false,
-          interval: 300000, // 5 minutes in ms
+          interval: 300000,
           intervalFormatted: '5 minutes',
-          message: 'Bot status unavailable. Make sure Discord bot is running.',
-          warning: 'Run /autosync action:on in Discord to enable'
+          message: 'Bot status unavailable.'
         }
       });
     }
@@ -762,7 +630,6 @@ app.get('/api/autosync/status', (req, res) => {
     const botStatus = JSON.parse(fs.readFileSync(botStatusPath, 'utf8'));
     
     if (botStatus.autoSync) {
-      // Auto-sync info available
       res.json({
         success: true,
         autosync: {
@@ -772,47 +639,32 @@ app.get('/api/autosync/status', (req, res) => {
           channelId: botStatus.autoSync.channelId || null,
           guildId: botStatus.autoSync.guildId || null,
           message: botStatus.autoSync.enabled 
-            ? `Auto-sync is enabled and checking every ${botStatus.autoSync.intervalFormatted || '5 minutes'}`
-            : 'Auto-sync is disabled. Run /autosync action:on in Discord to enable.'
+            ? `Auto-sync enabled, checking every ${botStatus.autoSync.intervalFormatted || '5 minutes'}`
+            : 'Auto-sync disabled.'
         }
       });
     } else {
-      // Bot status exists but no autosync info
       res.json({
         success: true,
         autosync: {
           enabled: false,
           interval: 300000,
           intervalFormatted: '5 minutes',
-          message: 'Auto-sync is disabled. Run /autosync action:on in Discord to enable.'
+          message: 'Auto-sync disabled.'
         }
       });
     }
   } catch (error) {
-    console.error('[AutoSync Status] Error:', error);
     res.json({
       success: true,
       autosync: {
         enabled: false,
         interval: 300000,
         intervalFormatted: '5 minutes',
-        message: 'Error reading auto-sync status. Bot may not be running.',
+        message: 'Error reading auto-sync status.',
         error: error.message
       }
     });
-  }
-});
-
-app.post('/api/autosync/toggle', (req, res) => {
-  try {
-    const { enabled } = req.body;
-    res.json({
-      success: true,
-      message: `Auto-sync ${enabled ? 'enabled' : 'disabled'} (requires bot restart to take effect)`,
-      enabled
-    });
-  } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
   }
 });
 
@@ -833,7 +685,7 @@ app.get('/api/bot/status', (req, res) => {
           nodeVersion: process.version,
           pid: process.pid,
           timestamp: new Date().toISOString(),
-          warning: 'Bot status unavailable. Ensure bot is running and writing to data/bot-status.json'
+          warning: 'Bot status unavailable.'
         }
       });
     }
@@ -841,8 +693,7 @@ app.get('/api/bot/status', (req, res) => {
     const botStatus = JSON.parse(fs.readFileSync(botStatusPath, 'utf8'));
     res.json({ success: true, source: 'bot_process', status: botStatus });
   } catch (error) {
-    console.error('[Bot Status] Error:', error.message);
-    res.status(500).json({ success: false, error: 'Failed to load bot status: ' + error.message });
+    res.status(500).json({ success: false, error: error.message });
   }
 });
 
@@ -853,7 +704,7 @@ app.post('/api/bot/restart', (req, res) => {
     if (error || stderr) {
       return res.status(400).json({
         success: false,
-        error: 'PM2 not available. Bot restart requires PM2 process manager.',
+        error: 'PM2 not available.',
         instructions: 'Start bot with: pm2 start src/bot.js --name discord-event-bot'
       });
     }
@@ -868,15 +719,9 @@ app.post('/api/bot/restart', (req, res) => {
       
       res.json({
         success: true,
-        message: `✅ Discord bot restart initiated via PM2!`,
-        pm2Output: stdout,
-        note: 'Web server remains running. Bot will restart in background.'
+        message: `Discord bot restart initiated!`,
+        pm2Output: stdout
       });
-      
-      setTimeout(() => {
-        const statusPath = path.join(__dirname, 'data', 'bot-status.json');
-        if (fs.existsSync(statusPath)) fs.unlinkSync(statusPath);
-      }, 3000);
     });
   });
 });
@@ -901,53 +746,11 @@ app.get('/api/config', (req, res) => {
 app.get('/api/commands/list', (req, res) => {
   try {
     const commands = [
-      { name: 'create', description: 'Create custom event', category: 'events', options: [
-        { name: 'title', type: 'string', required: true },
-        { name: 'description', type: 'string', required: false },
-        { name: 'datetime', type: 'string', required: true },
-        { name: 'duration', type: 'number', required: false },
-        { name: 'max-participants', type: 'number', required: false }
-      ]},
-      { name: 'preset', description: 'Create from preset', category: 'events', options: [
-        { name: 'preset-name', type: 'string', required: true },
-        { name: 'datetime', type: 'string', required: true },
-        { name: 'description', type: 'string', required: false }
-      ]},
-      { name: 'presets', description: 'List presets', category: 'events', options: [] },
-      { name: 'addrole', description: 'Add signup role', category: 'events', options: [
-        { name: 'event-id', type: 'string', required: true },
-        { name: 'role-name', type: 'string', required: true },
-        { name: 'emoji', type: 'string', required: false },
-        { name: 'max-slots', type: 'number', required: false }
-      ]},
-      { name: 'list', description: 'Show all events', category: 'events', options: [] },
-      { name: 'delete', description: 'Delete event', category: 'events', options: [
-        { name: 'event-id', type: 'string', required: true }
-      ]},
-      { name: 'eventinfo', description: 'Event details', category: 'events', options: [
-        { name: 'event-id', type: 'string', required: true }
-      ]},
-      { name: 'sync', description: 'Sync Google Calendar', category: 'calendar', options: [
-        { name: 'hours-ahead', type: 'number', required: false },
-        { name: 'filter', type: 'string', required: false }
-      ]},
-      { name: 'calendars', description: 'List calendars', category: 'calendar', options: [] },
-      { name: 'autosync', description: 'Manage auto-sync', category: 'calendar', options: [
-        { name: 'action', type: 'string', required: true, choices: ['toggle', 'status'] }
-      ]},
-      { name: 'setup-streaming', description: 'Set notification channel', category: 'streaming', options: [
-        { name: 'channel', type: 'channel', required: true }
-      ]},
-      { name: 'add-streamer', description: 'Add Twitch streamer', category: 'streaming', options: [
-        { name: 'username', type: 'string', required: true },
-        { name: 'custom-message', type: 'string', required: false }
-      ]},
-      { name: 'add-youtube', description: 'Add YouTube channel', category: 'streaming', options: [
-        { name: 'channel-id', type: 'string', required: true }
-      ]},
-      { name: 'list-streamers', description: 'List Twitch streamers', category: 'streaming', options: [] },
-      { name: 'list-youtube', description: 'List YouTube channels', category: 'streaming', options: [] },
-      { name: 'help', description: 'Show help', category: 'general', options: [] }
+      { name: 'create', description: 'Create custom event', category: 'events' },
+      { name: 'preset', description: 'Create from preset', category: 'events' },
+      { name: 'presets', description: 'List presets', category: 'events' },
+      { name: 'sync', description: 'Sync Google Calendar', category: 'calendar' },
+      { name: 'autosync', description: 'Manage auto-sync', category: 'calendar' }
     ];
     res.json({ success: true, commands, count: commands.length });
   } catch (error) {
@@ -965,22 +768,17 @@ app.listen(PORT, '0.0.0.0', () => {
     .flat()
     .find(iface => iface.family === 'IPv4' && !iface.internal)?.address || 'localhost';
 
-  console.log(`\n🌐 Web Interface Started Successfully!`);
+  const credentials = getCredentials();
+
+  console.log(`\n🌐 Web Interface Started!`);
   console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
   console.log(`📍 Local: http://localhost:${PORT}`);
   console.log(`📱 Network: http://${localIP}:${PORT}`);
   console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
-  
-  const apiKeyConfigured = process.env.WEB_API_KEY || config.web?.apiKey;
-  console.log(apiKeyConfigured 
-    ? `🔒 API authentication: ENABLED` 
-    : `⚠️ API authentication: DISABLED (set WEB_API_KEY in .env)`);
-  
-  console.log(`\n💡 Features:`);
-  console.log(`   ✅ Bidirectional sync: Web ↔ Discord`);
-  console.log(`   ✅ Auto-posting: Events post to Discord in 10s`);
-  console.log(`   ✅ Channel selection: Per-event Discord targeting`);
-  console.log(`   ✅ Google Calendar Management: Add/Edit/Delete integrations\n`);
+  console.log(`🔒 Authentication: Username/Password`);
+  console.log(`👤 Username: ${credentials.username}`);
+  console.log(`   ${credentials.username === 'admin' && credentials.password === 'admin' ? '⚠️  Using default credentials! Change in .env' : '✅ Custom credentials configured'}`);
+  console.log(`\n💡 Session-based authentication (24h expiry)\n`);
 });
 
 function formatUptime(seconds) {
