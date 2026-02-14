@@ -1,8 +1,11 @@
-// src/bot.js - Full bidirectional sync with FAST calendar polling (5 minutes) + AUTO-SYNC PERSISTENCE + RESTART PROTECTION
+// src/bot.js - Full bidirectional sync with DATABASE + 5-minute polling + AUTO-SYNC PERSISTENCE + RESTART PROTECTION
 const { Client, GatewayIntentBits, REST, Routes } = require('discord.js');
 const fs = require('fs');
 const path = require('path');
 const { config, validateConfig } = require('./config/index');
+
+// Database initialization
+const { testConnection, initializeDatabase } = require('./config/database');
 
 // Event bot services
 const CalendarService = require('./services/calendar');
@@ -38,7 +41,7 @@ const eventsConfig = new EventsConfig(
 );
 
 // Initialize web event poster
-const webEventPoster = new WebEventPoster(null, eventManager); // Client set in ready event
+const webEventPoster = new WebEventPoster(null, eventManager);
 
 // Initialize streaming services
 const streamingConfigPath = path.resolve(__dirname, config.files.streaming || 'data/streaming.json');
@@ -59,45 +62,11 @@ const client = new Client({
 // Set client for web event poster
 webEventPoster.client = client;
 
-// Auto-sync state - NOW WITH 5 MINUTE INTERVAL + PERSISTENCE!
+// Auto-sync state
 let autoSyncInterval = null;
 let autoSyncChannelId = null;
 let autoSyncGuildId = null;
-const CALENDAR_SYNC_INTERVAL = 5 * 60 * 1000; // 5 minutes (instead of 1 hour)
-
-// Auto-sync persistence file path
-const AUTOSYNC_CONFIG_PATH = path.join(__dirname, '../data/autosync-config.json');
-
-/**
- * Load auto-sync configuration from file
- */
-function loadAutoSyncConfig() {
-  try {
-    if (fs.existsSync(AUTOSYNC_CONFIG_PATH)) {
-      const data = fs.readFileSync(AUTOSYNC_CONFIG_PATH, 'utf8');
-      return JSON.parse(data);
-    }
-  } catch (error) {
-    console.error('[AutoSync] Error loading config:', error.message);
-  }
-  return { enabled: false, channelId: null, guildId: null, lastSync: null };
-}
-
-/**
- * Save auto-sync configuration to file
- */
-function saveAutoSyncConfig(config) {
-  try {
-    const dir = path.dirname(AUTOSYNC_CONFIG_PATH);
-    if (!fs.existsSync(dir)) {
-      fs.mkdirSync(dir, { recursive: true });
-    }
-    fs.writeFileSync(AUTOSYNC_CONFIG_PATH, JSON.stringify(config, null, 2), 'utf8');
-    console.log('[AutoSync] Configuration saved');
-  } catch (error) {
-    console.error('[AutoSync] Error saving config:', error.message);
-  }
-}
+const CALENDAR_SYNC_INTERVAL = 5 * 60 * 1000; // 5 minutes
 
 /**
  * Load all commands dynamically
@@ -163,19 +132,46 @@ async function registerCommands(clientId) {
 }
 
 /**
- * Start auto-sync for calendar events - NOW EVERY 5 MINUTES WITH PERSISTENCE!
+ * Start auto-sync for calendar events - DATABASE PERSISTENCE
  */
-function startAutoSync(channelId, guildId) {
+async function startAutoSync(channelId, guildId) {
   autoSyncChannelId = channelId;
   autoSyncGuildId = guildId;
   
-  // Save to persistence file
-  saveAutoSyncConfig({
-    enabled: true,
-    channelId: channelId,
-    guildId: guildId,
-    lastSync: new Date().toISOString()
-  });
+  // Save to database
+  try {
+    const { AutoSyncConfig } = require('./models');
+    
+    // Disable any existing configs
+    await AutoSyncConfig.update(
+      { enabled: false },
+      { where: { enabled: true } }
+    );
+    
+    // Create or update config
+    const [config, created] = await AutoSyncConfig.findOrCreate({
+      where: { id: 1 },
+      defaults: {
+        enabled: true,
+        channelId,
+        guildId,
+        lastSync: new Date()
+      }
+    });
+    
+    if (!created) {
+      await config.update({
+        enabled: true,
+        channelId,
+        guildId,
+        lastSync: new Date()
+      });
+    }
+    
+    console.log('[AutoSync] ✅ Configuration saved to database');
+  } catch (error) {
+    console.error('[AutoSync] Error saving config:', error.message);
+  }
   
   // Initial sync
   syncFromCalendar(channelId, guildId).catch(console.error);
@@ -185,13 +181,13 @@ function startAutoSync(channelId, guildId) {
     console.log('[AutoSync] Running scheduled sync (5-minute interval)...');
     try {
       await syncFromCalendar(channelId, guildId);
+      
       // Update last sync time
-      saveAutoSyncConfig({
-        enabled: true,
-        channelId: channelId,
-        guildId: guildId,
-        lastSync: new Date().toISOString()
-      });
+      const { AutoSyncConfig } = require('./models');
+      await AutoSyncConfig.update(
+        { lastSync: new Date() },
+        { where: { enabled: true } }
+      );
     } catch (error) {
       console.error('[AutoSync] ❌ Error during scheduled sync:', error);
     }
@@ -203,20 +199,24 @@ function startAutoSync(channelId, guildId) {
 /**
  * Stop auto-sync
  */
-function stopAutoSync() {
+async function stopAutoSync() {
   if (autoSyncInterval) {
     clearInterval(autoSyncInterval);
     autoSyncInterval = null;
     autoSyncChannelId = null;
     autoSyncGuildId = null;
     
-    // Save disabled state to persistence file
-    saveAutoSyncConfig({
-      enabled: false,
-      channelId: null,
-      guildId: null,
-      lastSync: new Date().toISOString()
-    });
+    // Save to database
+    try {
+      const { AutoSyncConfig } = require('./models');
+      await AutoSyncConfig.update(
+        { enabled: false, lastSync: new Date() },
+        { where: { enabled: true } }
+      );
+      console.log('[AutoSync] ✅ Configuration saved to database');
+    } catch (error) {
+      console.error('[AutoSync] Error saving config:', error.message);
+    }
     
     console.log('[AutoSync] ❌ Auto-sync disabled');
   }
@@ -232,7 +232,7 @@ async function syncFromCalendar(channelId, guildId, calendarFilter = null) {
   if (result.success && result.events.length > 0) {
     const channel = await client.channels.fetch(channelId);
     for (const eventData of result.events) {
-      const event = eventManager.importCalendarEvent(eventData, channelId, guildId);
+      const event = await eventManager.importCalendarEvent(eventData, channelId, guildId);
       
       if (event) {
         const eventEmbed = EmbedBuilder.createEventEmbed(event);
@@ -243,7 +243,7 @@ async function syncFromCalendar(channelId, guildId, calendarFilter = null) {
           components: buttons || []
         });
         
-        eventManager.updateEvent(event.id, { messageId: sentMessage.id });
+        await eventManager.updateEvent(event.id, { messageId: sentMessage.id });
         postedCount++;
       }
     }
@@ -251,7 +251,7 @@ async function syncFromCalendar(channelId, guildId, calendarFilter = null) {
     if (postedCount > 0) {
       console.log(`[AutoSync] ✅ Posted ${postedCount} new events (filtered from ${result.events.length} calendar events)`);
     } else {
-      console.log(`[AutoSync] ℹ️ No new events to post (checked ${result.events.length} calendar events)`);
+      console.log(`[AutoSync] ℹ️  No new events to post (checked ${result.events.length} calendar events)`);
     }
   }
   
@@ -259,42 +259,49 @@ async function syncFromCalendar(channelId, guildId, calendarFilter = null) {
 }
 
 /**
- * Restore auto-sync from saved configuration on bot startup
+ * Restore auto-sync from database on bot startup
  */
 async function restoreAutoSync() {
-  const config = loadAutoSyncConfig();
-  
-  if (config.enabled && config.channelId && config.guildId) {
-    console.log('[AutoSync] 🔄 Restoring auto-sync from saved configuration...');
-    console.log(`[AutoSync] Channel: ${config.channelId}, Guild: ${config.guildId}`);
+  try {
+    const { AutoSyncConfig } = require('./models');
+    const config = await AutoSyncConfig.findOne({
+      where: { enabled: true },
+      order: [['updatedAt', 'DESC']]
+    });
     
-    try {
-      // Verify channel exists and is accessible
-      const channel = await client.channels.fetch(config.channelId).catch(() => null);
+    if (config && config.channelId && config.guildId) {
+      console.log('[AutoSync] 🔄 Restoring auto-sync from database...');
+      console.log(`[AutoSync] Channel: ${config.channelId}, Guild: ${config.guildId}`);
       
-      if (!channel) {
-        console.error('[AutoSync] ⚠️  Saved channel no longer exists or is inaccessible');
+      try {
+        const channel = await client.channels.fetch(config.channelId).catch(() => null);
+        
+        if (!channel) {
+          console.error('[AutoSync] ⚠️  Saved channel no longer exists or is inaccessible');
+          console.log('[AutoSync] Auto-sync will remain disabled. Use /autosync to reconfigure.');
+          await config.update({ enabled: false });
+          return;
+        }
+        
+        if (channel.guildId !== config.guildId) {
+          console.error('[AutoSync] ⚠️  Channel guild mismatch');
+          await config.update({ enabled: false });
+          return;
+        }
+        
+        // Restore auto-sync
+        await startAutoSync(config.channelId, config.guildId);
+        console.log('[AutoSync] ✅ Auto-sync restored successfully!');
+        
+      } catch (error) {
+        console.error('[AutoSync] ❌ Error restoring auto-sync:', error.message);
         console.log('[AutoSync] Auto-sync will remain disabled. Use /autosync to reconfigure.');
-        saveAutoSyncConfig({ enabled: false, channelId: null, guildId: null, lastSync: null });
-        return;
       }
-      
-      if (channel.guildId !== config.guildId) {
-        console.error('[AutoSync] ⚠️  Channel guild mismatch');
-        saveAutoSyncConfig({ enabled: false, channelId: null, guildId: null, lastSync: null });
-        return;
-      }
-      
-      // Restore auto-sync
-      startAutoSync(config.channelId, config.guildId);
-      console.log('[AutoSync] ✅ Auto-sync restored successfully!');
-      
-    } catch (error) {
-      console.error('[AutoSync] ❌ Error restoring auto-sync:', error.message);
-      console.log('[AutoSync] Auto-sync will remain disabled. Use /autosync to reconfigure.');
+    } else {
+      console.log('[AutoSync] ℹ️  Auto-sync was not previously enabled');
     }
-  } else {
-    console.log('[AutoSync] ℹ️  Auto-sync was not previously enabled');
+  } catch (error) {
+    console.error('[AutoSync] Error loading config:', error.message);
   }
 }
 
@@ -305,21 +312,16 @@ async function checkMissedEvents() {
   console.log('[RestartProtection] 🔍 Checking for events that should have been posted during downtime...');
   
   try {
-    const allEvents = eventManager.getAllEvents();
+    const allEvents = await eventManager.getAllEvents();
     const now = new Date();
-    const twoHoursAgo = new Date(now.getTime() - (2 * 60 * 60 * 1000)); // 2 hours ago
+    const twoHoursAgo = new Date(now.getTime() - (2 * 60 * 60 * 1000));
     
     let missedCount = 0;
     
     for (const event of Object.values(allEvents)) {
-      // Check if event:
-      // 1. Has a channel and guild ID (should be posted to Discord)
-      // 2. Does NOT have a message ID (hasn't been posted yet)
-      // 3. Is within a reasonable timeframe (not too far in the past)
       if (event.channelId && event.guildId && !event.messageId) {
         const eventDate = new Date(event.dateTime);
         
-        // Post if event is upcoming OR recently passed (within 2 hours)
         if (eventDate > twoHoursAgo) {
           try {
             const channel = await client.channels.fetch(event.channelId).catch(() => null);
@@ -333,7 +335,7 @@ async function checkMissedEvents() {
                 components: buttons || []
               });
               
-              eventManager.updateEvent(event.id, { messageId: sentMessage.id });
+              await eventManager.updateEvent(event.id, { messageId: sentMessage.id });
               missedCount++;
               
               console.log(`[RestartProtection] ✅ Posted missed event: ${event.title}`);
@@ -344,7 +346,6 @@ async function checkMissedEvents() {
             console.error(`[RestartProtection] ❌ Error posting event ${event.id}:`, error.message);
           }
           
-          // Add delay to avoid rate limiting
           await new Promise(resolve => setTimeout(resolve, 1000));
         }
       }
@@ -430,7 +431,7 @@ function updateChannelList() {
   
   client.guilds.cache.forEach(guild => {
     const channels = guild.channels.cache
-      .filter(ch => ch.type === 0) // Text channels only
+      .filter(ch => ch.type === 0)
       .map(ch => ({
         id: ch.id,
         name: ch.name,
@@ -462,10 +463,23 @@ client.once('ready', async () => {
   console.log('\n╔═══════════════════════════════════════════════════════╗');
   console.log(`║ 🤖 ${client.user.tag} is online!`);
   console.log('╠═══════════════════════════════════════════════════════╣');
+  
+  // Initialize database
+  console.log('║ 💾 Initializing database...');
+  const dbConnected = await testConnection();
+  if (dbConnected) {
+    await initializeDatabase();
+    console.log('║ ✅ Database ready');
+  } else {
+    console.log('║ ❌ Database connection failed - bot will exit');
+    process.exit(1);
+  }
+  
+  console.log('╠═══════════════════════════════════════════════════════╣');
   console.log(`║ 📅 Events System: Ready`);
   console.log(`║ 🔗 Google Calendar: ${calendarService.isEnabled() ? 'Connected' : 'Not configured'}`);
   console.log(`║ ⚡ Calendar Sync: Every ${CALENDAR_SYNC_INTERVAL / 1000 / 60} minutes`);
-  console.log(`║ 📋 Presets: ${presetManager.getPresetCount()} loaded`);
+  console.log(`║ 📋 Presets: Loading from database...`);
   console.log('╠═══════════════════════════════════════════════════════╣');
   console.log(`║ 🎮 Twitch Monitor: ${config.twitch?.enabled ? 'Enabled' : 'Disabled (no credentials)'}`);
   console.log(`║ 📺 YouTube Monitor: Enabled (RSS-based)`);
@@ -496,7 +510,7 @@ client.once('ready', async () => {
   
   // Initialize status file sharing
   updateBotStatusFile();
-  setInterval(updateBotStatusFile, 30000); // Update every 30 seconds
+  setInterval(updateBotStatusFile, 30000);
   
   // Update guild and channel lists for web UI
   updateGuildList();
@@ -518,15 +532,15 @@ client.once('ready', async () => {
   client.on('channelDelete', () => updateChannelList());
   client.on('channelUpdate', () => updateChannelList());
   
-  // ✅ NEW: RESTART PROTECTION - Check for missed events
+  // RESTART PROTECTION - Check for missed events
   setTimeout(async () => {
     await checkMissedEvents();
-  }, 5000); // Wait 5 seconds after bot is ready
+  }, 5000);
   
-  // ✅ NEW: AUTO-SYNC PERSISTENCE - Restore auto-sync if it was enabled before restart
+  // AUTO-SYNC PERSISTENCE - Restore auto-sync if enabled
   setTimeout(async () => {
     await restoreAutoSync();
-  }, 10000); // Wait 10 seconds after bot is ready (after missed events check)
+  }, 10000);
 });
 
 // Command handler
@@ -564,7 +578,6 @@ client.on('interactionCreate', async interaction => {
       }
     }
   } else if (interaction.isButton()) {
-    // Handle button interactions
     const customId = interaction.customId;
     let action, eventId, roleName;
     
@@ -582,7 +595,7 @@ client.on('interactionCreate', async interaction => {
       return;
     }
     
-    const event = eventManager.getEvent(eventId);
+    const event = await eventManager.getEvent(eventId);
     if (!event) {
       return interaction.reply({ content: '❌ Event not found.', ephemeral: true });
     }
@@ -601,23 +614,23 @@ client.on('interactionCreate', async interaction => {
         return interaction.reply({ content: `❌ ${role.emoji} ${roleName} is full!`, ephemeral: true });
       }
       
-      eventManager.removeUser(event.id, interaction.user.id);
-      eventManager.signupUser(event.id, interaction.user.id, roleName);
+      await eventManager.removeUser(event.id, interaction.user.id);
+      await eventManager.signupUser(event.id, interaction.user.id, roleName);
       
-      const updatedEvent = eventManager.getEvent(event.id);
+      const updatedEvent = await eventManager.getEvent(event.id);
       const updatedEmbed = EmbedBuilder.createEventEmbed(updatedEvent);
       const buttons = ButtonBuilder.createSignupButtons(updatedEvent);
       
       await interaction.update({ embeds: [updatedEmbed], components: buttons || [] });
       await interaction.followUp({ content: `✅ Signed up as ${role.emoji} ${roleName}!`, ephemeral: true });
     } else if (action === 'leave') {
-      const { removed } = eventManager.removeUser(event.id, interaction.user.id);
+      const { removed } = await eventManager.removeUser(event.id, interaction.user.id);
       
       if (!removed) {
         return interaction.reply({ content: '❌ You were not signed up for this event.', ephemeral: true });
       }
       
-      const updatedEvent = eventManager.getEvent(event.id);
+      const updatedEvent = await eventManager.getEvent(event.id);
       const updatedEmbed = EmbedBuilder.createEventEmbed(updatedEvent);
       const buttons = ButtonBuilder.createSignupButtons(updatedEvent);
       
@@ -627,7 +640,7 @@ client.on('interactionCreate', async interaction => {
   } else if (interaction.isAutocomplete()) {
     if (interaction.commandName === 'preset' || interaction.commandName === 'deletepreset') {
       const focusedValue = interaction.options.getFocused();
-      const presets = presetManager.loadPresets();
+      const presets = await presetManager.loadPresets();
       const choices = Object.keys(presets).filter(choice =>
         choice.toLowerCase().includes(focusedValue.toLowerCase())
       );

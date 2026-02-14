@@ -60,7 +60,7 @@
                 </div>
                 <div class="channel-item" onclick="switchTab('calendar')">
                     <span class="channel-icon">🗓️</span>
-                    <span class="channel-name">Calendar</span>
+                    <span class="channel-name">Google Calendar</span>
                 </div>
                 <div class="channel-item" onclick="switchTab('streaming')">
                     <span class="channel-icon">🔴</span>
@@ -95,10 +95,11 @@
                 <!-- API Authentication -->
                 <div class="api-key-section">
                     <h3>🔐 API Authentication</h3>
-                    <p>Enter your API key to access protected endpoints:</p>
-                    <div class="api-key-input">
-                        <input type="password" id="apiKeyInput" placeholder="Enter API key">
-                        <button onclick="saveApiKey()">Save Key</button>
+                    <p>Enter your credentials to access the web interface:</p>
+                    <div class="login-form">
+                        <input type="text" id="usernameInput" placeholder="Username">
+                        <input type="password" id="passwordInput" placeholder="Password">
+                        <button onclick="login()">Login</button>
                     </div>
                 </div>
 
@@ -161,19 +162,31 @@
                             <input type="number" id="eventMaxParticipants" value="0" min="0">
                         </div>
                         <div class="form-group">
-                            <label>Roles</label>
-                            <div class="roles-container" id="eventRolesContainer">
-                                <div class="role-row">
-                                    <input type="text" placeholder="Emoji" class="role-emoji">
-                                    <input type="text" placeholder="Role name" class="role-name">
-                                    <input type="number" placeholder="Max slots" class="role-slots" min="0">
-                                    <button type="button" class="btn btn-danger" onclick="removeEventRoleRow(this)">✕</button>
-                                </div>
-                            </div>
-                            <button type="button" class="btn btn-secondary" onclick="addEventRoleRow()" style="margin-top: 10px;">+ Add Role</button>
+                            <label>Roles (one per line)</label>
+                            <textarea id="eventRoles" rows="4" placeholder="Tank&#10;Healer&#10;DPS&#10;Support"></textarea>
                         </div>
+                        <div class="form-group">
+                            <label>Guild (Optional)</label>
+                            <select id="eventGuild">
+                                <option value="">Select a guild...</option>
+                            </select>
+                        </div>
+                        
+                        <!-- Google Calendar Integration -->
+                        <div class="form-group">
+                            <label class="checkbox-label">
+                                <input type="checkbox" id="addToGoogleCalendar" onchange="toggleCalendarSelect()">
+                                <span>Add to Google Calendar</span>
+                            </label>
+                        </div>
+                        <div class="form-group hidden" id="calendarSelectGroup">
+                            <label>Select Calendar</label>
+                            <select id="googleCalendarId">
+                                <option value="">Loading calendars...</option>
+                            </select>
+                        </div>
+
                         <div class="action-buttons">
-                            <button type="button" class="btn btn-secondary" onclick="resetEventForm()">Reset</button>
                             <button type="submit" class="btn btn-primary">Create Event</button>
                         </div>
                     </form>
@@ -198,40 +211,30 @@
                     <div class="alert hidden" id="createPresetAlert"></div>
                     <form onsubmit="event.preventDefault(); createPreset();">
                         <div class="form-group">
-                            <label>Preset ID *</label>
-                            <input type="text" id="presetId" placeholder="e.g., raid-dungeon" required>
-                            <small>Unique identifier (lowercase, numbers, hyphens only)</small>
+                            <label>Preset Key * (lowercase, numbers, hyphens only)</label>
+                            <input type="text" id="presetKey" placeholder="e.g., raid-night" pattern="[a-z0-9-]+" required>
                         </div>
                         <div class="form-group">
                             <label>Preset Name *</label>
-                            <input type="text" id="presetName" placeholder="e.g., Dungeon Run" required>
+                            <input type="text" id="presetName" placeholder="e.g., Raid Night" required>
                         </div>
                         <div class="form-group">
                             <label>Description</label>
                             <textarea id="presetDescription" placeholder="Preset description"></textarea>
                         </div>
                         <div class="form-group">
-                            <label>Default Duration (minutes)</label>
-                            <input type="number" id="presetDuration" value="60" min="1">
+                            <label>Duration (minutes) *</label>
+                            <input type="number" id="presetDuration" value="60" min="1" required>
                         </div>
                         <div class="form-group">
-                            <label>Default Max Participants (0 = unlimited)</label>
+                            <label>Max Participants (0 = unlimited)</label>
                             <input type="number" id="presetMaxParticipants" value="0" min="0">
                         </div>
                         <div class="form-group">
-                            <label>Roles *</label>
-                            <div class="roles-container" id="presetRolesContainer">
-                                <div class="role-row">
-                                    <input type="text" placeholder="Emoji" class="role-emoji">
-                                    <input type="text" placeholder="Role name" class="role-name">
-                                    <input type="number" placeholder="Max slots" class="role-slots" min="0">
-                                    <button type="button" class="btn btn-danger" onclick="removePresetRoleRow(this)">✕</button>
-                                </div>
-                            </div>
-                            <button type="button" class="btn btn-secondary" onclick="addPresetRoleRow()" style="margin-top: 10px;">+ Add Role</button>
+                            <label>Roles (one per line)</label>
+                            <textarea id="presetRoles" rows="4" placeholder="Tank&#10;Healer&#10;DPS&#10;Support"></textarea>
                         </div>
                         <div class="action-buttons">
-                            <button type="button" class="btn btn-secondary" onclick="resetPresetForm()">Reset</button>
                             <button type="submit" class="btn btn-primary">Create Preset</button>
                         </div>
                     </form>
@@ -242,44 +245,101 @@
                     <div class="section-title">
                         <h2>✨ Create Event from Preset</h2>
                     </div>
-                    <div class="alert hidden" id="createFromPresetAlert"></div>
-                    <form onsubmit="event.preventDefault(); createEventFromPreset();">
+                    <div class="alert hidden" id="fromPresetAlert"></div>
+                    <form onsubmit="event.preventDefault(); createFromPreset();">
                         <div class="form-group">
                             <label>Select Preset *</label>
-                            <select id="fromPresetSelect" required>
-                                <option value="">-- Choose a preset --</option>
+                            <select id="fromPresetKey" required onchange="updatePresetPreview()">
+                                <option value="">-- Select a preset --</option>
                             </select>
+                        </div>
+                        <div id="presetPreview" class="preset-preview hidden">
+                            <h4>Preset Details:</h4>
+                            <p id="presetPreviewDetails"></p>
+                        </div>
+                        <div class="form-group">
+                            <label>Event Title (Optional - uses preset name)</label>
+                            <input type="text" id="fromPresetTitle" placeholder="Override preset name">
                         </div>
                         <div class="form-group">
                             <label>Date & Time *</label>
                             <input type="datetime-local" id="fromPresetDateTime" required>
                         </div>
                         <div class="form-group">
-                            <label>Custom Description (optional)</label>
-                            <textarea id="fromPresetDescription" placeholder="Override preset description"></textarea>
+                            <label>Guild (Optional)</label>
+                            <select id="fromPresetGuild">
+                                <option value="">Select a guild...</option>
+                            </select>
                         </div>
+
+                        <!-- Google Calendar Integration -->
+                        <div class="form-group">
+                            <label class="checkbox-label">
+                                <input type="checkbox" id="fromPresetAddToCalendar" onchange="toggleFromPresetCalendarSelect()">
+                                <span>Add to Google Calendar</span>
+                            </label>
+                        </div>
+                        <div class="form-group hidden" id="fromPresetCalendarSelectGroup">
+                            <label>Select Calendar</label>
+                            <select id="fromPresetGoogleCalendarId">
+                                <option value="">Loading calendars...</option>
+                            </select>
+                        </div>
+
                         <div class="action-buttons">
                             <button type="submit" class="btn btn-primary">Create Event</button>
                         </div>
                     </form>
                 </div>
 
-                <!-- ==================== CALENDAR TAB ==================== -->
+                <!-- ==================== GOOGLE CALENDAR TAB ==================== -->
                 <div class="tab-content" id="calendar">
                     <div class="section-title">
-                        <h2>🗓️ Google Calendar Integration</h2>
+                        <h2>🗓️ Google Calendar Management</h2>
                     </div>
-                    <div class="alert hidden" id="calendarStatusAlert"></div>
-                    
-                    <!-- Connection Status -->
+
+                    <!-- Calendar Status -->
                     <div class="config-card">
                         <div class="config-header">
-                            <div class="config-title">🔗 Connection Status</div>
-                            <button class="btn btn-secondary" onclick="checkCalendarStatus()">🔄 Refresh Status</button>
+                            <div class="config-title">Configuration Status</div>
                         </div>
-                        <div class="config-meta">
-                            <div id="calendarConnectionStatus" style="padding: 15px; background: #f5f5f5; border-radius: 6px; margin: 10px 0;">
-                                <p style="margin: 0; font-size: 14px; color: #666;">Loading...</p>
+                        <div id="calendarStatus">
+                            <div class="loading">Checking configuration...</div>
+                        </div>
+                    </div>
+
+                    <!-- Add Calendar -->
+                    <div class="config-card">
+                        <div class="config-header">
+                            <div class="config-title">Add Calendar</div>
+                        </div>
+                        <div class="action-buttons" style="margin-bottom: 15px;">
+                            <button class="btn btn-secondary" onclick="loadAvailableCalendars()">🔍 Browse My Google Calendars</button>
+                            <button class="btn btn-secondary" onclick="showManualCalendarAdd()">✏️ Add Manually</button>
+                        </div>
+
+                        <!-- Available Calendars -->
+                        <div id="availableCalendarsSection" class="hidden">
+                            <h4>Available Google Calendars</h4>
+                            <div id="availableCalendarsList"></div>
+                        </div>
+
+                        <!-- Manual Add -->
+                        <div id="manualCalendarSection" class="hidden">
+                            <h4>Add Calendar Manually</h4>
+                            <div class="alert hidden" id="addCalendarAlert"></div>
+                            <div class="form-group">
+                                <label>Calendar Name *</label>
+                                <input type="text" id="manualCalendarName" placeholder="e.g., Guild Events">
+                            </div>
+                            <div class="form-group">
+                                <label>Calendar ID *</label>
+                                <input type="text" id="manualCalendarId" placeholder="e.g., abc123@group.calendar.google.com">
+                                <small>Find this in Google Calendar settings → Calendar ID</small>
+                            </div>
+                            <div class="action-buttons">
+                                <button class="btn btn-primary" onclick="addManualCalendar()">Add Calendar</button>
+                                <button class="btn btn-secondary" onclick="hideManualCalendarAdd()">Cancel</button>
                             </div>
                         </div>
                     </div>
@@ -287,87 +347,80 @@
                     <!-- Configured Calendars -->
                     <div class="config-card">
                         <div class="config-header">
-                            <div class="config-title">📅 Configured Calendars</div>
+                            <div class="config-title">Configured Calendars</div>
                         </div>
-                        <div id="calendarsList">
+                        <div id="configuredCalendarsList">
                             <div class="loading">Loading calendars...</div>
                         </div>
                     </div>
 
-                    <!-- Manual Sync -->
+                    <!-- Setup Instructions -->
                     <div class="config-card">
                         <div class="config-header">
-                            <div class="config-title">🔄 Manual Sync</div>
+                            <div class="config-title">📚 Setup Instructions</div>
                         </div>
-                        <div class="config-meta">
-                            <p>Sync events from Google Calendar to Discord manually</p>
-                        </div>
-                        <form onsubmit="event.preventDefault(); syncCalendar();">
-                            <div class="form-group">
-                                <label>Hours Ahead</label>
-                                <input type="number" id="syncHoursAhead" value="24" min="1">
-                                <small>How many hours of upcoming events to sync</small>
-                            </div>
-                            <div class="form-group">
-                                <label>Filter (optional)</label>
-                                <input type="text" id="syncFilter" placeholder="Event title filter">
-                                <small>Only sync events containing this text</small>
-                            </div>
-                            <div class="action-buttons">
-                                <button type="submit" class="btn btn-primary">🔄 Sync Events</button>
-                            </div>
-                        </form>
-                        <div class="alert hidden" id="syncStatusAlert"></div>
-                    </div>
+                        <div class="calendar-instructions">
+                            <h4>Step 1: Create Google Cloud Project</h4>
+                            <ol>
+                                <li>Go to <a href="https://console.cloud.google.com/" target="_blank">Google Cloud Console</a></li>
+                                <li>Create a new project or select existing one</li>
+                                <li>Enable Google Calendar API</li>
+                            </ol>
 
-                    <!-- Auto-Sync Settings -->
-                    <div class="config-card">
-                        <div class="config-header">
-                            <div class="config-title">⚡ Auto-Sync Settings</div>
+                            <h4>Step 2: Create Service Account</h4>
+                            <ol>
+                                <li>Go to "IAM & Admin" → "Service Accounts"</li>
+                                <li>Create new service account</li>
+                                <li>Grant "Editor" role</li>
+                                <li>Create and download JSON key</li>
+                            </ol>
+
+                            <h4>Step 3: Share Calendar</h4>
+                            <ol>
+                                <li>Open Google Calendar</li>
+                                <li>Go to calendar settings</li>
+                                <li>Share with service account email (from JSON key)</li>
+                                <li>Grant "Make changes to events" permission</li>
+                            </ol>
+
+                            <h4>Step 4: Configure Bot</h4>
+                            <ol>
+                                <li>Save JSON key as <code>data/calendar-credentials.json</code></li>
+                                <li>Set <code>GOOGLE_CALENDAR_CREDENTIALS</code> in .env file</li>
+                                <li>Restart the bot</li>
+                            </ol>
                         </div>
-                        <div class="config-meta">
-                            <p><strong>Auto-Sync Status:</strong></p>
-                            <div id="autosyncStatus" style="padding: 15px; background: #f5f5f5; border-radius: 6px; margin: 10px 0;">
-                                <p style="margin: 0; font-size: 14px; color: #666;">Loading auto-sync status...</p>
-                            </div>
-                        </div>
-                        <div class="action-buttons">
-                            <button class="btn btn-secondary" onclick="getAutosyncStatus()">🔄 Refresh</button>
-                            <button class="btn btn-success" onclick="toggleAutosync(true)">▶️ Enable Auto-Sync</button>
-                            <button class="btn btn-danger" onclick="toggleAutosync(false)">⏹️ Disable Auto-Sync</button>
-                        </div>
-                        <div class="alert hidden" id="autosyncStatusAlert"></div>
                     </div>
                 </div>
 
                 <!-- ==================== STREAMING TAB ==================== -->
                 <div class="tab-content" id="streaming">
                     <div class="section-title">
-                        <h2>🔴 Streaming Configuration</h2>
+                        <h2>🔴 Streaming Notifications</h2>
                     </div>
 
                     <div class="guild-selector">
                         <div class="form-group">
                             <label>Select Server (Guild)</label>
-                            <select id="streamingGuildId" onchange="loadStreamingSettings(this.value)">
-                                <option value="">-- Select a server --</option>
+                            <select id="streamingGuildId" onchange="loadStreamingConfig(this.value)">
+                                <option value="">-- Loading servers...</option>
                             </select>
                         </div>
                     </div>
 
                     <div id="streamingContent" class="hidden">
                         <!-- Twitch Configuration -->
-                        <div class="config-card twitch">
+                        <div class="config-card">
                             <div class="config-header">
-                                <div class="config-title">🎮 Twitch Streamers</div>
+                                <div class="config-title">🟣 Twitch Streamers</div>
                                 <button type="button" class="btn btn-secondary" onclick="addTwitchRow()">+ Add Streamer</button>
                             </div>
                             <div class="config-meta">
-                                <p>Monitor Twitch streamers for live notifications</p>
+                                <p>Monitor Twitch streamers for live status</p>
                             </div>
                             <div id="twitchContainer">
-                                <div class="streamer-row">
-                                    <input type="text" placeholder="Twitch username (e.g., ninja)" class="twitch-username">
+                                <div class="twitch-row">
+                                    <input type="text" placeholder="Twitch username" class="twitch-username">
                                     <button type="button" class="btn btn-danger" style="padding: 6px; min-width: 36px;" onclick="this.parentElement.remove()">✕</button>
                                 </div>
                             </div>
@@ -378,7 +431,7 @@
                         </div>
 
                         <!-- YouTube Configuration -->
-                        <div class="config-card youtube">
+                        <div class="config-card">
                             <div class="config-header">
                                 <div class="config-title">📺 YouTube Channels</div>
                                 <button type="button" class="btn btn-secondary" onclick="addYouTubeRow()">+ Add Channel</button>

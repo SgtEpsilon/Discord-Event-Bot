@@ -1,3 +1,34 @@
+# Environment variables
 .env
+.env.local
+.env.*.local
+
+# Database
+data/database.sqlite
+data/database.sqlite-shm
+data/database.sqlite-wal
+
+# Credentials
+data/calendar-credentials.json
+data/*.json
+
+# Logs
+logs/
+*.log
+
+# Dependencies
 node_modules/
-package-lock.json
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Backups
+data/backup_*

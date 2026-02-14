@@ -1,143 +1,192 @@
 // src/services/streamingConfig.js
-const Storage = require('../utils/storage');
+const { StreamingConfig } = require('../models');
 
 class StreamingConfigManager {
   constructor(filePath) {
-    this.storage = new Storage(filePath);
+    // filePath parameter kept for backward compatibility but not used
   }
 
   /**
    * Get guild streaming configuration
    */
-  getGuildConfig(guildId) {
-    let guildConfig = this.storage.get(guildId);
-    
-    if (!guildConfig) {
-      guildConfig = this.createDefaultConfig();
-      this.storage.set(guildId, guildConfig);
+  async getGuildConfig(guildId) {
+    let config = await StreamingConfig.findByPk(guildId);
+
+    if (!config) {
+      config = await this.createDefaultConfig(guildId);
     }
-    
-    return guildConfig;
+
+    return {
+      notificationChannelId: config.notificationChannelId,
+      guildName: config.guildName,
+      twitch: {
+        enabled: config.twitchEnabled,
+        streamers: config.twitchStreamers,
+        message: config.twitchMessage,
+        customMessages: config.twitchCustomMessages
+      },
+      youtube: {
+        enabled: config.youtubeEnabled,
+        channels: config.youtubeChannels,
+        message: config.youtubeMessage
+      },
+      createdAt: config.createdAt?.toISOString(),
+      updatedAt: config.updatedAt?.toISOString()
+    };
   }
 
   /**
    * Create default streaming configuration
    */
-  createDefaultConfig() {
-    return {
+  async createDefaultConfig(guildId) {
+    const config = await StreamingConfig.create({
+      guildId,
       notificationChannelId: null,
-      twitch: {
-        enabled: false,
-        streamers: [], // Array of usernames
-        message: "🔴 {username} is now live on Twitch!\n**{title}**\nPlaying: {game}",
-        customMessages: {} // username -> custom message
-      },
-      youtube: {
-        enabled: false,
-        channels: [], // Array of channel IDs
-        message: "📺 {channel} just uploaded a new video!\n**{title}**"
-      }
-    };
+      twitchEnabled: false,
+      twitchStreamers: [],
+      twitchMessage: "🔴 {username} is now live on Twitch!\n**{title}**\nPlaying: {game}",
+      twitchCustomMessages: {},
+      youtubeEnabled: false,
+      youtubeChannels: [],
+      youtubeMessage: "📺 {channel} just uploaded a new video!\n**{title}**"
+    });
+
+    return config;
   }
 
   /**
    * Set notification channel for guild
    */
-  setNotificationChannel(guildId, channelId) {
-    const config = this.getGuildConfig(guildId);
-    config.notificationChannelId = channelId;
-    this.storage.set(guildId, config);
-    return config;
+  async setNotificationChannel(guildId, channelId) {
+    let config = await StreamingConfig.findByPk(guildId);
+
+    if (!config) {
+      config = await this.createDefaultConfig(guildId);
+    }
+
+    await config.update({ notificationChannelId: channelId });
+
+    return this.getGuildConfig(guildId);
   }
 
   /**
    * Add Twitch streamer
    */
-  addTwitchStreamer(guildId, username, customMessage = null) {
-    const config = this.getGuildConfig(guildId);
-    
-    if (!config.twitch.streamers.includes(username)) {
-      config.twitch.streamers.push(username);
+  async addTwitchStreamer(guildId, username, customMessage = null) {
+    let config = await StreamingConfig.findByPk(guildId);
+
+    if (!config) {
+      config = await this.createDefaultConfig(guildId);
     }
-    
+
+    const streamers = config.twitchStreamers;
+    const customMessages = config.twitchCustomMessages;
+
+    if (!streamers.includes(username)) {
+      streamers.push(username);
+    }
+
     if (customMessage) {
-      config.twitch.customMessages[username] = customMessage;
+      customMessages[username] = customMessage;
     }
-    
-    config.twitch.enabled = true;
-    this.storage.set(guildId, config);
-    return config;
+
+    await config.update({
+      twitchStreamers: streamers,
+      twitchCustomMessages: customMessages,
+      twitchEnabled: true
+    });
+
+    return this.getGuildConfig(guildId);
   }
 
   /**
    * Remove Twitch streamer
    */
-  removeTwitchStreamer(guildId, username) {
-    const config = this.getGuildConfig(guildId);
-    const index = config.twitch.streamers.indexOf(username);
+  async removeTwitchStreamer(guildId, username) {
+    const config = await StreamingConfig.findByPk(guildId);
+    if (!config) return null;
+
+    const streamers = config.twitchStreamers.filter(s => s !== username);
+    const customMessages = config.twitchCustomMessages;
     
-    if (index !== -1) {
-      config.twitch.streamers.splice(index, 1);
+    if (customMessages[username]) {
+      delete customMessages[username];
     }
-    
-    if (config.twitch.customMessages[username]) {
-      delete config.twitch.customMessages[username];
-    }
-    
-    if (config.twitch.streamers.length === 0) {
-      config.twitch.enabled = false;
-    }
-    
-    this.storage.set(guildId, config);
-    return config;
+
+    await config.update({
+      twitchStreamers: streamers,
+      twitchCustomMessages: customMessages,
+      twitchEnabled: streamers.length > 0
+    });
+
+    return this.getGuildConfig(guildId);
   }
 
   /**
    * Add YouTube channel
    */
-  addYouTubeChannel(guildId, channelId) {
-    const config = this.getGuildConfig(guildId);
-    
-    if (!config.youtube.channels.includes(channelId)) {
-      config.youtube.channels.push(channelId);
+  async addYouTubeChannel(guildId, channelId) {
+    let config = await StreamingConfig.findByPk(guildId);
+
+    if (!config) {
+      config = await this.createDefaultConfig(guildId);
     }
-    
-    config.youtube.enabled = true;
-    this.storage.set(guildId, config);
-    return config;
+
+    const channels = config.youtubeChannels;
+
+    if (!channels.includes(channelId)) {
+      channels.push(channelId);
+    }
+
+    await config.update({
+      youtubeChannels: channels,
+      youtubeEnabled: true
+    });
+
+    return this.getGuildConfig(guildId);
   }
 
   /**
    * Remove YouTube channel
    */
-  removeYouTubeChannel(guildId, channelId) {
-    const config = this.getGuildConfig(guildId);
-    const index = config.youtube.channels.indexOf(channelId);
-     
-    if (index !== -1) {
-      config.youtube.channels.splice(index, 1);
-    }
-    
-    if (config.youtube.channels.length === 0) {
-      config.youtube.enabled = false;
-    }
-    
-    this.storage.set(guildId, config);
-    return config;
+  async removeYouTubeChannel(guildId, channelId) {
+    const config = await StreamingConfig.findByPk(guildId);
+    if (!config) return null;
+
+    const channels = config.youtubeChannels.filter(c => c !== channelId);
+
+    await config.update({
+      youtubeChannels: channels,
+      youtubeEnabled: channels.length > 0
+    });
+
+    return this.getGuildConfig(guildId);
   }
 
   /**
    * Get all guilds with streaming enabled
    */
-  getAllGuildConfigs() {
-    return this.storage.getAllAsObject();
+  async getAllGuildConfigs() {
+    const configs = await StreamingConfig.findAll();
+    const configsObj = {};
+
+    for (const config of configs) {
+      configsObj[config.guildId] = await this.getGuildConfig(config.guildId);
+    }
+
+    return configsObj;
   }
 
   /**
    * Delete guild config
    */
-  deleteGuildConfig(guildId) {
-    return this.storage.delete(guildId);
+  async deleteGuildConfig(guildId) {
+    const config = await StreamingConfig.findByPk(guildId);
+    if (config) {
+      await config.destroy();
+      return true;
+    }
+    return false;
   }
 }
 
