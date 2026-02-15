@@ -1,5 +1,7 @@
 // src/services/calendar.js
 const { google } = require('googleapis');
+const axios = require('axios');
+const ical = require('node-ical');
 
 class CalendarService {
   constructor(credentials, calendars) {
@@ -48,8 +50,20 @@ class CalendarService {
     for (const cal of this.calendars) {
       try {
         console.log(`[Calendar] Testing "${cal.name}" (${cal.id})`);
-        await this.calendar.calendars.get({ calendarId: cal.id });
-        console.log(`[Calendar] ✅ "${cal.name}" - Successfully connected`);
+        
+        // Check if it's an iCal URL
+        if (cal.id.startsWith('http://') || cal.id.startsWith('https://')) {
+          const response = await axios.head(cal.id, { timeout: 5000 });
+          if (response.status === 200) {
+            console.log(`[Calendar] ✅ "${cal.name}" - iCal URL accessible`);
+          } else {
+            throw new Error(`HTTP ${response.status}`);
+          }
+        } else {
+          // Google Calendar ID
+          await this.calendar.calendars.get({ calendarId: cal.id });
+          console.log(`[Calendar] ✅ "${cal.name}" - Successfully connected`);
+        }
       } catch (error) {
         console.error(`[Calendar] ❌ "${cal.name}" - Failed: ${error.message}`);
         allSuccessful = false;
@@ -64,6 +78,16 @@ class CalendarService {
    */
   async createEvent(event) {
     if (!this.isEnabled() || this.calendars.length === 0) return null;
+    
+    // Only create in actual Google Calendar, not iCal URLs
+    const googleCalendars = this.calendars.filter(cal => 
+      !cal.id.startsWith('http://') && !cal.id.startsWith('https://')
+    );
+    
+    if (googleCalendars.length === 0) {
+      console.log('[Calendar] No writable Google Calendars configured (only iCal URLs)');
+      return null;
+    }
     
     try {
       // Validate event.dateTime upfront
@@ -88,7 +112,7 @@ class CalendarService {
         },
       };
       
-      const targetCalendar = this.calendars[0];
+      const targetCalendar = googleCalendars[0];
       console.log(`[Calendar] Creating event "${event.title}" in calendar: ${targetCalendar.name}`);
       
       const response = await this.calendar.events.insert({
@@ -105,13 +129,75 @@ class CalendarService {
   }
 
   /**
-   * Sync events from Google Calendar
+   * Fetch events from iCal URL
+   */
+  async fetchICalEvents(icalUrl, hoursAhead = 168) {
+    try {
+      console.log(`[Calendar] Fetching iCal from: ${icalUrl}`);
+      
+      const response = await axios.get(icalUrl, {
+        timeout: 10000,
+        headers: {
+          'User-Agent': 'Discord-Event-Bot/1.0'
+        }
+      });
+      
+      const events = await ical.async.parseICS(response.data);
+      const now = new Date();
+      const futureDate = new Date(now.getTime() + (hoursAhead * 60 * 60 * 1000));
+      
+      const importedEvents = [];
+      
+      for (const event of Object.values(events)) {
+        if (event.type !== 'VEVENT') continue;
+        
+        // Handle both single events and recurring events
+        const startDate = event.start ? new Date(event.start) : null;
+        const endDate = event.end ? new Date(event.end) : null;
+        
+        if (!startDate || !endDate) {
+          console.log(`[Calendar] Skipping event without dates: ${event.summary || 'Unknown'}`);
+          continue;
+        }
+        
+        // Only include future events
+        if (startDate < now || startDate > futureDate) {
+          continue;
+        }
+        
+        const durationMinutes = Math.round((endDate - startDate) / 1000 / 60);
+        
+        importedEvents.push({
+          calendarEvent: {
+            id: event.uid || `ical_${Date.now()}_${Math.random()}`,
+            summary: event.summary || 'Untitled Event',
+            description: event.description || '',
+            start: { dateTime: startDate.toISOString() },
+            end: { dateTime: endDate.toISOString() },
+            htmlLink: event.url || icalUrl,
+            location: event.location || ''
+          },
+          duration: durationMinutes
+        });
+      }
+      
+      console.log(`[Calendar] Fetched ${importedEvents.length} events from iCal`);
+      return importedEvents;
+      
+    } catch (error) {
+      console.error(`[Calendar] Error fetching iCal: ${error.message}`);
+      throw error;
+    }
+  }
+
+  /**
+   * Sync events from Google Calendar (including iCal URLs)
    */
   async syncEvents(hoursAhead = 168, calendarFilter = null) {
-    if (!this.isEnabled()) {
+    if (!this.isEnabled() && this.calendars.every(cal => !cal.id.startsWith('http'))) {
       return {
         success: false,
-        message: 'Google Calendar not configured',
+        message: 'No calendars configured',
         events: []
       };
     }
@@ -144,15 +230,34 @@ class CalendarService {
         console.log(`[Sync] Fetching events from "${cal.name}" (${cal.id})`);
         
         try {
-          const response = await this.calendar.events.list({
-            calendarId: cal.id,
-            timeMin: now.toISOString(),
-            timeMax: futureDate.toISOString(),
-            singleEvents: true,
-            orderBy: 'startTime',
-          });
+          let calendarEvents = [];
           
-          const calendarEvents = response.data.items || [];
+          // Check if it's an iCal URL
+          if (cal.id.startsWith('http://') || cal.id.startsWith('https://')) {
+            // Fetch from iCal URL
+            const icalEvents = await this.fetchICalEvents(cal.id, hoursAhead);
+            calendarEvents = icalEvents.map(e => ({
+              ...e.calendarEvent,
+              duration: e.duration
+            }));
+          } else {
+            // Fetch from Google Calendar API
+            if (!this.calendar) {
+              console.log(`[Sync] Skipping Google Calendar "${cal.name}" - no API credentials`);
+              continue;
+            }
+            
+            const response = await this.calendar.events.list({
+              calendarId: cal.id,
+              timeMin: now.toISOString(),
+              timeMax: futureDate.toISOString(),
+              singleEvents: true,
+              orderBy: 'startTime',
+            });
+            
+            calendarEvents = response.data.items || [];
+          }
+          
           console.log(`[Sync] Found ${calendarEvents.length} events in "${cal.name}"`);
           
           for (const calEvent of calendarEvents) {
@@ -169,7 +274,7 @@ class CalendarService {
             
             const startTime = new Date(calEvent.start.dateTime);
             const endTime = new Date(calEvent.end.dateTime);
-            const durationMinutes = Math.round((endTime - startTime) / 1000 / 60);
+            const durationMinutes = calEvent.duration || Math.round((endTime - startTime) / 1000 / 60);
             
             importedEvents.push({
               calendarEvent: calEvent,
@@ -194,7 +299,7 @@ class CalendarService {
         calendars: calendarsToSync.map(c => c.name)
       };
     } catch (error) {
-      console.error('[Sync] ❌ Error syncing from Google Calendar:', error.message);
+      console.error('[Sync] ❌ Error syncing from calendars:', error.message);
       return {
         success: false,
         message: `Failed to sync: ${error.message}`,

@@ -3,6 +3,7 @@
 let authToken = localStorage.getItem('authToken');
 let currentPresets = [];
 let currentGuilds = [];
+let uptimeInterval = null;
 
 // ==================== INITIALIZATION ====================
 
@@ -15,10 +16,7 @@ document.addEventListener('DOMContentLoaded', function() {
     now.setMinutes(0);
     
     const eventDateTime = document.getElementById('eventDateTime');
-    const fromPresetDateTime = document.getElementById('fromPresetDateTime');
-    
     if (eventDateTime) eventDateTime.value = now.toISOString().slice(0, 16);
-    if (fromPresetDateTime) fromPresetDateTime.value = now.toISOString().slice(0, 16);
 });
 
 // ==================== AUTHENTICATION ====================
@@ -76,7 +74,6 @@ async function login() {
             updateAuthUI(true);
             loadDashboard();
             showAlert('Successfully logged in!', 'success', 'loginAlert');
-            // Clear form
             document.getElementById('usernameInput').value = '';
             document.getElementById('passwordInput').value = '';
         } else {
@@ -93,9 +90,12 @@ function logout() {
     localStorage.removeItem('authToken');
     showLoginModal();
     updateAuthUI(false);
-    // Clear sensitive data
     document.getElementById('eventsContainer').innerHTML = '<div class="loading">Please login to view events</div>';
     document.getElementById('presetsContainer').innerHTML = '<div class="loading">Please login to view presets</div>';
+    if (uptimeInterval) {
+        clearInterval(uptimeInterval);
+        uptimeInterval = null;
+    }
 }
 
 function showLoginModal() {
@@ -130,6 +130,7 @@ async function loadDashboard() {
     loadPresets();
     loadGuilds();
     loadCalendarsForDropdowns();
+    startUptimeCounter();
 }
 
 async function loadStats() {
@@ -146,6 +147,61 @@ async function loadStats() {
     } catch (error) {
         console.error('Error loading stats:', error);
     }
+}
+
+// ==================== UPTIME COUNTER ====================
+
+function startUptimeCounter() {
+    if (uptimeInterval) {
+        clearInterval(uptimeInterval);
+    }
+    
+    updateUptime();
+    uptimeInterval = setInterval(updateUptime, 1000);
+}
+
+async function updateUptime() {
+    try {
+        const response = await fetch('/api/bot/status', {
+            headers: { 'X-Auth-Token': authToken }
+        });
+        
+        if (!response.ok) return;
+        
+        const status = await response.json();
+        
+        if (status.uptime !== undefined) {
+            const uptimeFormatted = formatUptime(status.uptime);
+            
+            // Update uptime display if on bot control tab
+            const botStatusInfo = document.getElementById('botStatusInfo');
+            if (botStatusInfo && !botStatusInfo.innerHTML.includes('Loading')) {
+                const uptimeElements = botStatusInfo.querySelectorAll('div');
+                uptimeElements.forEach(el => {
+                    if (el.innerHTML.includes('<strong>Uptime:</strong>')) {
+                        el.innerHTML = `<strong>Uptime:</strong> ${uptimeFormatted}`;
+                    }
+                });
+            }
+        }
+    } catch (error) {
+        // Silently fail - don't spam console
+    }
+}
+
+function formatUptime(seconds) {
+    const days = Math.floor(seconds / 86400);
+    const hours = Math.floor((seconds % 86400) / 3600);
+    const mins = Math.floor((seconds % 3600) / 60);
+    const secs = Math.floor(seconds % 60);
+    
+    let parts = [];
+    if (days > 0) parts.push(`${days}d`);
+    if (hours > 0) parts.push(`${hours}h`);
+    if (mins > 0) parts.push(`${mins}m`);
+    if (secs > 0 || parts.length === 0) parts.push(`${secs}s`);
+    
+    return parts.join(' ');
 }
 
 // ==================== EVENTS ====================
@@ -165,18 +221,23 @@ async function loadEvents() {
             return;
         }
 
-        // Sort by date
         events.sort((a, b) => new Date(a.dateTime) - new Date(b.dateTime));
 
         container.innerHTML = events.map(event => {
             const eventDate = new Date(event.dateTime);
             const isPast = eventDate < new Date();
             const signupCount = Object.keys(event.signups || {}).length;
+            
+            // Check if it's an iCal event
+            const isIcal = event.calendarSource && 
+                           (event.calendarSourceId?.includes('http://') || 
+                            event.calendarSourceId?.includes('https://'));
+            const icalTag = isIcal ? '<span class="ical-badge">(iCal)</span>' : '';
 
             return `
                 <div class="event-card ${isPast ? 'past-event' : ''}">
                     <div class="event-header">
-                        <h3>${escapeHtml(event.title)}</h3>
+                        <h3>${escapeHtml(event.title)} ${icalTag}</h3>
                         ${event.calendarLink ? `<a href="${event.calendarLink}" target="_blank" class="calendar-badge">📅 Google Calendar</a>` : ''}
                     </div>
                     <p class="event-description">${escapeHtml(event.description || 'No description')}</p>
@@ -189,7 +250,7 @@ async function loadEvents() {
                     </div>
                     ${event.roles && event.roles.length > 0 ? `
                         <div class="event-roles">
-                            <strong>Roles:</strong> ${event.roles.map(r => `<span class="role-badge">${escapeHtml(r)}</span>`).join(' ')}
+                            <strong>Roles:</strong> ${event.roles.map(r => `<span class="role-badge">${escapeHtml(r.emoji || '👤')} ${escapeHtml(r.name || r)}</span>`).join(' ')}
                         </div>
                     ` : ''}
                     <div class="event-actions">
@@ -221,7 +282,17 @@ async function createEvent() {
         return;
     }
 
-    const roles = rolesText ? rolesText.split('\n').filter(r => r.trim()) : [];
+    const roles = rolesText ? rolesText.split('\n').filter(r => r.trim()).map(r => {
+        const parts = r.trim().split(' ');
+        if (parts.length >= 2) {
+            return {
+                emoji: parts[0],
+                name: parts.slice(1).join(' '),
+                maxSlots: null
+            };
+        }
+        return { emoji: '👤', name: r.trim(), maxSlots: null };
+    }) : [];
 
     try {
         const response = await fetch('/api/events', {
@@ -239,7 +310,8 @@ async function createEvent() {
                 roles,
                 guildId: guildId || null,
                 addToCalendar,
-                calendarId
+                calendarId,
+                createdBy: 'web_interface'
             })
         });
 
@@ -249,7 +321,6 @@ async function createEvent() {
             showAlert('Event created successfully!', 'success', 'createEventAlert');
             document.querySelector('#create-event form').reset();
             
-            // Reset datetime to 1 hour from now
             const now = new Date();
             now.setHours(now.getHours() + 1);
             now.setMinutes(0);
@@ -323,7 +394,7 @@ async function loadPresets() {
                 </div>
                 ${preset.roles && preset.roles.length > 0 ? `
                     <div class="preset-roles">
-                        <strong>Roles:</strong> ${preset.roles.map(r => `<span class="role-badge">${escapeHtml(r)}</span>`).join(' ')}
+                        <strong>Roles:</strong> ${preset.roles.map(r => `<span class="role-badge">${escapeHtml(r.emoji || '👤')} ${escapeHtml(r.name)}</span>`).join(' ')}
                     </div>
                 ` : ''}
                 <div class="preset-actions">
@@ -332,9 +403,6 @@ async function loadPresets() {
                 </div>
             </div>
         `).join('');
-
-        // Update preset dropdown
-        updatePresetDropdown();
     } catch (error) {
         console.error('Error loading presets:', error);
         container.innerHTML = '<p class="error-text">Failed to load presets</p>';
@@ -359,7 +427,17 @@ async function createPreset() {
         return;
     }
 
-    const roles = rolesText ? rolesText.split('\n').filter(r => r.trim()) : [];
+    const roles = rolesText ? rolesText.split('\n').filter(r => r.trim()).map(r => {
+        const parts = r.trim().split(' ');
+        if (parts.length >= 2) {
+            return {
+                emoji: parts[0],
+                name: parts.slice(1).join(' '),
+                maxSlots: null
+            };
+        }
+        return { emoji: '👤', name: r.trim(), maxSlots: null };
+    }) : [];
 
     try {
         const response = await fetch('/api/presets', {
@@ -421,54 +499,16 @@ async function deletePreset(presetKey) {
     }
 }
 
-function usePreset(presetKey) {
-    switchTab('create-from-preset');
-    document.getElementById('fromPresetKey').value = presetKey;
-    updatePresetPreview();
-}
-
-function updatePresetDropdown() {
-    const select = document.getElementById('fromPresetKey');
-    select.innerHTML = '<option value="">-- Select a preset --</option>' +
-        currentPresets.map(p => `<option value="${p.key}">${escapeHtml(p.name)}</option>`).join('');
-}
-
-function updatePresetPreview() {
-    const presetKey = document.getElementById('fromPresetKey').value;
-    const preview = document.getElementById('presetPreview');
-    const details = document.getElementById('presetPreviewDetails');
-
-    if (!presetKey) {
-        preview.classList.add('hidden');
-        return;
-    }
-
+async function usePreset(presetKey) {
     const preset = currentPresets.find(p => p.key === presetKey);
-    if (preset) {
-        details.innerHTML = `
-            <strong>${escapeHtml(preset.name)}</strong><br>
-            ${preset.description ? escapeHtml(preset.description) + '<br>' : ''}
-            Duration: ${preset.duration} minutes<br>
-            Max Participants: ${preset.maxParticipants || 'Unlimited'}<br>
-            ${preset.roles && preset.roles.length > 0 ? `Roles: ${preset.roles.join(', ')}` : 'No roles'}
-        `;
-        preview.classList.remove('hidden');
-    }
-}
-
-async function createFromPreset() {
-    const presetKey = document.getElementById('fromPresetKey').value;
-    const title = document.getElementById('fromPresetTitle').value.trim();
-    const dateTime = document.getElementById('fromPresetDateTime').value;
-    const guildId = document.getElementById('fromPresetGuild').value;
-    const addToCalendar = document.getElementById('fromPresetAddToCalendar')?.checked || false;
-    const calendarId = addToCalendar ? document.getElementById('fromPresetGoogleCalendarId')?.value : null;
-
-    if (!presetKey || !dateTime) {
-        showAlert('Please select a preset and date/time', 'error', 'fromPresetAlert');
-        return;
-    }
-
+    if (!preset) return;
+    
+    const dateTime = prompt('Enter date and time for the event (YYYY-MM-DDTHH:MM):');
+    if (!dateTime) return;
+    
+    const guildSelect = document.getElementById('eventGuild');
+    const guildId = guildSelect?.value || '';
+    
     try {
         const response = await fetch('/api/events/from-preset', {
             method: 'POST',
@@ -478,35 +518,24 @@ async function createFromPreset() {
             },
             body: JSON.stringify({
                 presetKey,
-                title: title || null,
                 dateTime,
                 guildId: guildId || null,
-                addToCalendar,
-                calendarId
+                createdBy: 'web_interface'
             })
         });
 
         const data = await response.json();
 
         if (data.success) {
-            showAlert('Event created from preset successfully!', 'success', 'fromPresetAlert');
-            document.querySelector('#create-from-preset form').reset();
-            
-            // Reset datetime
-            const now = new Date();
-            now.setHours(now.getHours() + 1);
-            now.setMinutes(0);
-            document.getElementById('fromPresetDateTime').value = now.toISOString().slice(0, 16);
-            
-            document.getElementById('presetPreview').classList.add('hidden');
+            alert('Event created from preset successfully!');
             loadEvents();
             loadStats();
         } else {
-            showAlert(data.error || 'Failed to create event', 'error', 'fromPresetAlert');
+            alert(data.error || 'Failed to create event');
         }
     } catch (error) {
         console.error('Error creating event from preset:', error);
-        showAlert('Failed to create event', 'error', 'fromPresetAlert');
+        alert('Failed to create event');
     }
 }
 
@@ -522,13 +551,20 @@ async function loadCalendarStatus() {
         });
         const data = await response.json();
 
-        if (data.configured) {
+        if (data.configured || data.hasIcalCalendars) {
+            let statusText = '';
+            if (data.configured) {
+                statusText = 'Google Calendar API configured. You can add Google Calendars and public iCal URLs.';
+            } else {
+                statusText = 'iCal URLs supported. Add public calendar URLs (Google Calendar API not configured - write operations disabled).';
+            }
+            
             statusDiv.innerHTML = `
                 <div class="status-indicator success">
                     <span class="status-dot"></span>
                     <div>
-                        <strong>Google Calendar Configured</strong>
-                        <p>Credentials file loaded successfully. You can now add calendars.</p>
+                        <strong>Calendar Integration Available</strong>
+                        <p>${statusText}</p>
                     </div>
                 </div>
             `;
@@ -537,8 +573,8 @@ async function loadCalendarStatus() {
                 <div class="status-indicator error">
                     <span class="status-dot"></span>
                     <div>
-                        <strong>Google Calendar Not Configured</strong>
-                        <p>Please add credentials file and restart the bot. See instructions below.</p>
+                        <strong>Calendar Not Configured</strong>
+                        <p>You can still add public iCal URLs without Google Calendar API credentials.</p>
                         ${data.error ? `<p class="error-text">Error: ${data.error}</p>` : ''}
                     </div>
                 </div>
@@ -547,6 +583,35 @@ async function loadCalendarStatus() {
     } catch (error) {
         console.error('Error checking calendar status:', error);
         statusDiv.innerHTML = '<p class="error-text">Failed to check calendar status</p>';
+    }
+}
+
+async function manualSyncCalendar() {
+    const btn = event.target;
+    btn.disabled = true;
+    btn.textContent = '🔄 Syncing...';
+    
+    try {
+        const response = await fetch('/api/calendars/manual-sync', {
+            method: 'POST',
+            headers: { 'X-Auth-Token': authToken }
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+            alert(`✅ Sync complete!\n\n${data.message}\n\n${data.imported || 0} new events imported.`);
+            loadEvents();
+            loadStats();
+        } else {
+            alert(`❌ Sync failed: ${data.error || 'Unknown error'}`);
+        }
+    } catch (error) {
+        console.error('Error syncing calendar:', error);
+        alert('❌ Sync failed. Please try again.');
+    } finally {
+        btn.disabled = false;
+        btn.textContent = '🔄 Manual Sync Now';
     }
 }
 
@@ -565,19 +630,24 @@ async function loadConfiguredCalendars() {
             return;
         }
 
-        container.innerHTML = calendars.map(cal => `
-            <div class="calendar-item">
-                <div class="calendar-info">
-                    <h4>${escapeHtml(cal.name)}</h4>
-                    <p class="calendar-id">${escapeHtml(cal.calendarId)}</p>
-                    <small>Added: ${new Date(cal.createdAt).toLocaleString()}</small>
+        container.innerHTML = calendars.map(cal => {
+            const isIcal = cal.calendarId.startsWith('http://') || cal.calendarId.startsWith('https://');
+            const calType = isIcal ? '🔗 iCal URL' : '📅 Google Calendar';
+            
+            return `
+                <div class="calendar-item">
+                    <div class="calendar-info">
+                        <h4>${escapeHtml(cal.name)} <span style="font-size: 0.8em; color: #888;">(${calType})</span></h4>
+                        <p class="calendar-id">${escapeHtml(cal.calendarId)}</p>
+                        <small>Added: ${new Date(cal.createdAt).toLocaleString()}</small>
+                    </div>
+                    <div class="calendar-actions">
+                        <button class="btn btn-small btn-secondary" onclick="editCalendar(${cal.id}, '${escapeHtml(cal.name)}', '${escapeHtml(cal.calendarId)}')">Edit</button>
+                        <button class="btn btn-small btn-danger" onclick="deleteCalendar(${cal.id}, '${escapeHtml(cal.name)}')">Delete</button>
+                    </div>
                 </div>
-                <div class="calendar-actions">
-                    <button class="btn btn-small btn-secondary" onclick="editCalendar(${cal.id}, '${escapeHtml(cal.name)}', '${escapeHtml(cal.calendarId)}')">Edit</button>
-                    <button class="btn btn-small btn-danger" onclick="deleteCalendar(${cal.id}, '${escapeHtml(cal.name)}')">Delete</button>
-                </div>
-            </div>
-        `).join('');
+            `;
+        }).join('');
     } catch (error) {
         console.error('Error loading calendars:', error);
         container.innerHTML = '<p class="error-text">Failed to load calendars</p>';
@@ -645,6 +715,17 @@ async function addManualCalendar() {
         return;
     }
 
+    const isIcalUrl = calendarId.startsWith('http://') || calendarId.startsWith('https://');
+    
+    if (isIcalUrl) {
+        try {
+            new URL(calendarId);
+        } catch (e) {
+            showAlert('Invalid URL format', 'error', 'addCalendarAlert');
+            return;
+        }
+    }
+
     try {
         const response = await fetch('/api/calendars', {
             method: 'POST',
@@ -658,7 +739,8 @@ async function addManualCalendar() {
         const data = await response.json();
 
         if (data.success) {
-            showAlert('Calendar added successfully!', 'success', 'addCalendarAlert');
+            const calType = isIcalUrl ? 'iCal URL' : 'Google Calendar';
+            showAlert(`${calType} added successfully!`, 'success', 'addCalendarAlert');
             setTimeout(() => {
                 hideManualCalendarAdd();
                 loadConfiguredCalendars();
@@ -704,8 +786,18 @@ async function editCalendar(id, currentName, currentCalendarId) {
     const name = prompt('Calendar Name:', currentName);
     if (!name) return;
 
-    const calendarId = prompt('Calendar ID:', currentCalendarId);
+    const calendarId = prompt('Calendar ID or iCal URL:', currentCalendarId);
     if (!calendarId) return;
+    
+    const isIcalUrl = calendarId.startsWith('http://') || calendarId.startsWith('https://');
+    if (isIcalUrl) {
+        try {
+            new URL(calendarId);
+        } catch (e) {
+            alert('Invalid URL format');
+            return;
+        }
+    }
 
     try {
         const response = await fetch(`/api/calendars/${id}`, {
@@ -764,11 +856,9 @@ async function loadCalendarsForDropdowns() {
         const calendars = await response.json();
 
         const select1 = document.getElementById('googleCalendarId');
-        const select2 = document.getElementById('fromPresetGoogleCalendarId');
 
         if (calendars.length === 0) {
             if (select1) select1.innerHTML = '<option value="">No calendars configured</option>';
-            if (select2) select2.innerHTML = '<option value="">No calendars configured</option>';
             return;
         }
 
@@ -777,7 +867,6 @@ async function loadCalendarsForDropdowns() {
         ).join('');
 
         if (select1) select1.innerHTML = options;
-        if (select2) select2.innerHTML = options;
     } catch (error) {
         console.error('Error loading calendars for dropdowns:', error);
     }
@@ -786,16 +875,6 @@ async function loadCalendarsForDropdowns() {
 function toggleCalendarSelect() {
     const checkbox = document.getElementById('addToGoogleCalendar');
     const selectGroup = document.getElementById('calendarSelectGroup');
-    if (checkbox.checked) {
-        selectGroup.classList.remove('hidden');
-    } else {
-        selectGroup.classList.add('hidden');
-    }
-}
-
-function toggleFromPresetCalendarSelect() {
-    const checkbox = document.getElementById('fromPresetAddToCalendar');
-    const selectGroup = document.getElementById('fromPresetCalendarSelectGroup');
     if (checkbox.checked) {
         selectGroup.classList.remove('hidden');
     } else {
@@ -812,10 +891,8 @@ async function loadGuilds() {
         });
         currentGuilds = await response.json();
 
-        // Update all guild selects
         const selects = [
             document.getElementById('eventGuild'),
-            document.getElementById('fromPresetGuild'),
             document.getElementById('settingsGuildId'),
             document.getElementById('streamingGuildId')
         ];
@@ -841,7 +918,6 @@ async function loadGuildSettings(guildId) {
     document.getElementById('settingsContent').classList.remove('hidden');
     document.getElementById('noGuildSelected').style.display = 'none';
 
-    // Load event channel
     try {
         const response = await fetch(`/api/event-channel/${guildId}`, {
             headers: { 'X-Auth-Token': authToken }
@@ -852,7 +928,6 @@ async function loadGuildSettings(guildId) {
         console.error('Error loading event channel:', error);
     }
 
-    // Load streaming config
     try {
         const response = await fetch(`/api/streaming/${guildId}`, {
             headers: { 'X-Auth-Token': authToken }
@@ -962,7 +1037,7 @@ async function saveNotificationChannel() {
 
 // ==================== STREAMING CONFIG ====================
 
-function loadStreamingConfig(guildId) {
+async function loadStreamingConfig(guildId) {
     if (!guildId) {
         document.getElementById('streamingContent').classList.add('hidden');
         document.getElementById('noStreamingGuildSelected').style.display = 'block';
@@ -971,36 +1046,131 @@ function loadStreamingConfig(guildId) {
 
     document.getElementById('streamingContent').classList.remove('hidden');
     document.getElementById('noStreamingGuildSelected').style.display = 'none';
+    
+    try {
+        const response = await fetch(`/api/streaming/${guildId}`, {
+            headers: { 'X-Auth-Token': authToken }
+        });
+        const config = await response.json();
+        
+        // Load Twitch streamers
+        const twitchContainer = document.getElementById('twitchContainer');
+        twitchContainer.innerHTML = '';
+        
+        if (config.twitch && config.twitch.streamers && config.twitch.streamers.length > 0) {
+            config.twitch.streamers.forEach(streamer => {
+                addTwitchRow(streamer);
+            });
+        } else {
+            addTwitchRow();
+        }
+        
+        // Load YouTube channels
+        const youtubeContainer = document.getElementById('youtubeContainer');
+        youtubeContainer.innerHTML = '';
+        
+        if (config.youtube && config.youtube.channels && config.youtube.channels.length > 0) {
+            config.youtube.channels.forEach(channel => {
+                addYouTubeRow(channel);
+            });
+        } else {
+            addYouTubeRow();
+        }
+    } catch (error) {
+        console.error('Error loading streaming config:', error);
+    }
 }
 
-function addTwitchRow() {
+function addTwitchRow(username = '') {
     const container = document.getElementById('twitchContainer');
     const row = document.createElement('div');
     row.className = 'twitch-row';
     row.innerHTML = `
-        <input type="text" placeholder="Twitch username" class="twitch-username">
+        <input type="text" placeholder="Twitch username" class="twitch-username" value="${escapeHtml(username)}">
         <button type="button" class="btn btn-danger" style="padding: 6px; min-width: 36px;" onclick="this.parentElement.remove()">✕</button>
     `;
     container.appendChild(row);
 }
 
-function addYouTubeRow() {
+function addYouTubeRow(channelId = '') {
     const container = document.getElementById('youtubeContainer');
     const row = document.createElement('div');
     row.className = 'youtube-row';
     row.innerHTML = `
-        <input type="text" placeholder="Channel ID or URL" class="youtube-channel">
+        <input type="text" placeholder="Channel ID or URL" class="youtube-channel" value="${escapeHtml(channelId)}">
         <button type="button" class="btn btn-danger" style="padding: 6px; min-width: 36px;" onclick="this.parentElement.remove()">✕</button>
     `;
     container.appendChild(row);
 }
 
-function saveTwitchConfig() {
-    showAlert('Twitch configuration saved (placeholder)', 'success', 'twitchStatus');
+async function saveTwitchConfig() {
+    const guildId = document.getElementById('streamingGuildId').value;
+    if (!guildId) {
+        showAlert('Please select a guild', 'error', 'twitchStatus');
+        return;
+    }
+    
+    const rows = document.querySelectorAll('.twitch-row');
+    const streamers = Array.from(rows)
+        .map(row => row.querySelector('.twitch-username').value.trim())
+        .filter(s => s);
+    
+    try {
+        const response = await fetch(`/api/streaming/${guildId}/twitch`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-Auth-Token': authToken
+            },
+            body: JSON.stringify({ streamers })
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+            showAlert('Twitch streamers saved successfully!', 'success', 'twitchStatus');
+        } else {
+            showAlert(data.error || 'Failed to save', 'error', 'twitchStatus');
+        }
+    } catch (error) {
+        console.error('Error saving Twitch config:', error);
+        showAlert('Failed to save Twitch streamers', 'error', 'twitchStatus');
+    }
 }
 
-function saveYouTubeConfig() {
-    showAlert('YouTube configuration saved (placeholder)', 'success', 'youtubeStatus');
+async function saveYouTubeConfig() {
+    const guildId = document.getElementById('streamingGuildId').value;
+    if (!guildId) {
+        showAlert('Please select a guild', 'error', 'youtubeStatus');
+        return;
+    }
+    
+    const rows = document.querySelectorAll('.youtube-row');
+    const channels = Array.from(rows)
+        .map(row => row.querySelector('.youtube-channel').value.trim())
+        .filter(c => c);
+    
+    try {
+        const response = await fetch(`/api/streaming/${guildId}/youtube`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-Auth-Token': authToken
+            },
+            body: JSON.stringify({ channels })
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+            showAlert('YouTube channels saved successfully!', 'success', 'youtubeStatus');
+        } else {
+            showAlert(data.error || 'Failed to save', 'error', 'youtubeStatus');
+        }
+    } catch (error) {
+        console.error('Error saving YouTube config:', error);
+        showAlert('Failed to save YouTube channels', 'error', 'youtubeStatus');
+    }
 }
 
 // ==================== BOT CONTROL ====================
@@ -1018,7 +1188,7 @@ async function loadBotStatus() {
         container.innerHTML = `
             <div class="bot-status-grid">
                 <div><strong>Status:</strong> ${status.status || 'Unknown'}</div>
-                <div><strong>Uptime:</strong> ${status.uptime || 'N/A'}</div>
+                <div><strong>Uptime:</strong> ${formatUptime(status.uptime || 0)}</div>
                 <div><strong>Guilds:</strong> ${status.guildCount || 0}</div>
                 <div><strong>Auto-sync:</strong> ${status.autoSync?.enabled ? '✅ Enabled' : '❌ Disabled'}</div>
             </div>
@@ -1061,9 +1231,40 @@ function reloadCommands() {
     }
 }
 
-function restartBot() {
-    if (confirm('Restart the Discord bot? The web server will remain running.')) {
-        showAlert('Bot restart requested', 'success', 'botControlAlert');
+async function restartBot() {
+    try {
+        // Check if bot is running in PM2
+        const response = await fetch('/api/bot/pm2-status', {
+            headers: { 'X-Auth-Token': authToken }
+        });
+        
+        const data = await response.json();
+        
+        if (!data.pm2Running) {
+            alert('⚠️ Bot is not running in PM2\n\nThe bot needs to be started with PM2 to support remote restart.\n\nRun: npm run pm2:start');
+            return;
+        }
+        
+        if (confirm('Restart the Discord bot? The web server will remain running.')) {
+            const restartResponse = await fetch('/api/bot/restart', {
+                method: 'POST',
+                headers: { 'X-Auth-Token': authToken }
+            });
+            
+            const restartData = await restartResponse.json();
+            
+            if (restartData.success) {
+                showAlert('Bot restart requested successfully!', 'success', 'botControlAlert');
+                setTimeout(() => {
+                    loadBotStatus();
+                }, 3000);
+            } else {
+                showAlert(restartData.error || 'Failed to restart bot', 'error', 'botControlAlert');
+            }
+        }
+    } catch (error) {
+        console.error('Error restarting bot:', error);
+        showAlert('Failed to restart bot', 'error', 'botControlAlert');
     }
 }
 
@@ -1079,7 +1280,6 @@ async function loadCommands() {
         });
         const commands = await response.json();
 
-        // Group by category
         const grouped = {};
         commands.forEach(cmd => {
             if (!grouped[cmd.category]) grouped[cmd.category] = [];
@@ -1110,28 +1310,23 @@ async function loadCommands() {
 // ==================== UI HELPERS ====================
 
 function switchTab(tabName) {
-    // Hide all tabs
     document.querySelectorAll('.tab-content').forEach(tab => {
         tab.classList.remove('active');
     });
 
-    // Remove active from all channel items
     document.querySelectorAll('.channel-item').forEach(item => {
         item.classList.remove('active');
     });
 
-    // Show selected tab
     const selectedTab = document.getElementById(tabName);
     if (selectedTab) {
         selectedTab.classList.add('active');
     }
 
-    // Add active to clicked channel item
     if (event && event.target) {
         event.target.closest('.channel-item')?.classList.add('active');
     }
 
-    // Load data for specific tabs
     if (tabName === 'events') loadEvents();
     if (tabName === 'presets') loadPresets();
     if (tabName === 'calendar') {
@@ -1142,6 +1337,14 @@ function switchTab(tabName) {
     if (tabName === 'bot-control') {
         loadBotStatus();
         loadBotConfig();
+    }
+    if (tabName === 'streaming') {
+        const guildId = document.getElementById('streamingGuildId').value;
+        if (guildId) loadStreamingConfig(guildId);
+    }
+    if (tabName === 'server-settings') {
+        const guildId = document.getElementById('settingsGuildId').value;
+        if (guildId) loadGuildSettings(guildId);
     }
 }
 
@@ -1188,6 +1391,7 @@ function hideAlert(elementId) {
 }
 
 function escapeHtml(text) {
+    if (!text) return '';
     const div = document.createElement('div');
     div.textContent = text;
     return div.innerHTML;

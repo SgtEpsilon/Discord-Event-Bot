@@ -1,394 +1,302 @@
-// web-server.js - Web interface for Discord Event Bot
+// web-server.js - Discord Event Bot Web Interface Server
 const express = require('express');
 const path = require('path');
-const bodyParser = require('body-parser');
-const { testConnection, initializeDatabase } = require('./src/config/database');
-const { AutoSyncConfig } = require('./src/models');
-
-// Import classes
-const EventManager = require('./src/services/eventManager');
-const PresetManager = require('./src/services/presetManager');
-const EventsConfigService = require('./src/services/eventsConfig');
-const StreamingConfigManager = require('./src/services/streamingConfig');
-const {
-  GoogleCalendarService,
-  getAllCalendarConfigs,
-  getCalendarConfig,
-  createCalendarConfig,
-  updateCalendarConfig,
-  deleteCalendarConfig
-} = require('./src/services/googleCalendar');
+const { EventManager } = require('./src/managers/event-manager');
+const { PresetManager } = require('./src/managers/preset-manager');
+const { GoogleCalendar } = require('./src/services/google-calendar');
+const { config } = require('./src/config');
 
 const app = express();
 const PORT = process.env.WEB_PORT || 3000;
 
-// Initialize services
+// Middleware
+app.use(express.json());
+app.use(express.static('public'));
+
+// Initialize managers
 const eventManager = new EventManager();
 const presetManager = new PresetManager();
-const eventsConfig = new EventsConfigService();
-const streamingConfig = new StreamingConfigManager();
-const googleCalendar = new GoogleCalendarService();
+const googleCalendar = new GoogleCalendar();
 
-// Session storage (in-memory for simplicity)
+// Session storage (in production, use Redis or database)
 const sessions = new Map();
 
-// Middleware
-app.use(bodyParser.json());
-app.use(express.static(path.join(__dirname, 'public')));
-
-// Initialize database on startup
-(async () => {
-  console.log('🔌 Testing database connection...');
-  const connected = await testConnection();
-  if (connected) {
-    console.log('🗄️  Initializing database...');
-    await initializeDatabase();
-    console.log('✅ Database ready');
-  } else {
-    console.error('❌ Database connection failed - continuing anyway');
-  }
-})();
-
-// ==================== AUTHENTICATION ====================
-
-function generateToken() {
-  return Math.random().toString(36).substring(2) + Date.now().toString(36);
-}
-
+// Authentication middleware
 function verifySession(req, res, next) {
   const token = req.headers['x-auth-token'];
   
-  if (!token) {
-    return res.status(401).json({ error: 'No authentication token provided' });
+  if (!token || !sessions.has(token)) {
+    return res.status(401).json({ error: 'Unauthorized' });
   }
   
-  const session = sessions.get(token);
-  if (!session || session.expires < Date.now()) {
-    sessions.delete(token);
-    return res.status(401).json({ error: 'Invalid or expired session' });
-  }
-  
-  // Extend session
-  session.expires = Date.now() + (24 * 60 * 60 * 1000); // 24 hours
   next();
 }
+
+// ==================== AUTHENTICATION ====================
 
 app.post('/api/auth/login', (req, res) => {
   const { username, password } = req.body;
   
+  // Simple authentication (in production, use proper password hashing)
   const validUsername = process.env.WEB_USERNAME || 'admin';
-  const validPassword = process.env.WEB_PASSWORD || 'admin';
+  const validPassword = process.env.WEB_PASSWORD || 'password';
   
   if (username === validUsername && password === validPassword) {
-    const token = generateToken();
-    sessions.set(token, {
-      username,
-      expires: Date.now() + (24 * 60 * 60 * 1000) // 24 hours
-    });
+    const token = Math.random().toString(36).substring(2);
+    sessions.set(token, { username, loginTime: Date.now() });
     
     res.json({ success: true, token });
   } else {
-    res.status(401).json({ error: 'Invalid credentials' });
+    res.status(401).json({ success: false, error: 'Invalid credentials' });
   }
-});
-
-app.post('/api/auth/logout', (req, res) => {
-  const token = req.headers['x-auth-token'];
-  if (token) {
-    sessions.delete(token);
-  }
-  res.json({ success: true });
 });
 
 app.get('/api/auth/check', verifySession, (req, res) => {
   res.json({ authenticated: true });
 });
 
-// ==================== EVENTS ROUTES ====================
+// ==================== DASHBOARD ====================
 
-app.get('/api/events', verifySession, async (req, res) => {
+app.get('/api/stats', verifySession, async (req, res) => {
   try {
-    const events = await eventManager.getAllEvents();
-    res.json(events);
+    const allEvents = await eventManager.getAllEvents();
+    const events = Object.values(allEvents);
+    const now = new Date();
+    
+    const upcomingEvents = events.filter(e => new Date(e.dateTime) > now).length;
+    const totalSignups = events.reduce((sum, e) => 
+      sum + Object.keys(e.signups || {}).length, 0
+    );
+    
+    const presets = await presetManager.getAllPresets();
+    
+    res.json({
+      totalEvents: events.length,
+      upcomingEvents,
+      totalSignups,
+      totalPresets: Object.keys(presets).length
+    });
   } catch (error) {
-    console.error('Error fetching events:', error);
-    res.status(500).json({ error: 'Failed to fetch events' });
+    console.error('Error loading stats:', error);
+    res.status(500).json({ error: error.message });
   }
 });
 
-app.get('/api/events/:id', verifySession, async (req, res) => {
+// ==================== EVENTS ====================
+
+app.get('/api/events', verifySession, async (req, res) => {
   try {
-    const event = await eventManager.getEvent(req.params.id);
-    if (!event) {
-      return res.status(404).json({ error: 'Event not found' });
-    }
-    res.json(event);
+    const allEvents = await eventManager.getAllEvents();
+    const events = Object.values(allEvents);
+    res.json(events);
   } catch (error) {
-    console.error('Error fetching event:', error);
-    res.status(500).json({ error: 'Failed to fetch event' });
+    console.error('Error loading events:', error);
+    res.status(500).json({ error: error.message });
   }
 });
 
 app.post('/api/events', verifySession, async (req, res) => {
   try {
-    const { title, description, dateTime, duration, maxParticipants, roles, guildId, addToCalendar, calendarId } = req.body;
+    const eventData = req.body;
     
-    if (!title || !dateTime) {
-      return res.status(400).json({ error: 'Title and dateTime are required' });
+    // Generate event ID if not provided
+    if (!eventData.id) {
+      eventData.id = `event_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
     }
     
-    const eventId = `event_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    // Add to Google Calendar if requested
+    let calendarLink = null;
+    if (eventData.addToCalendar && eventData.calendarId) {
+      const CalendarService = require('./src/services/calendar');
+      const calendars = await getAllCalendarConfigs();
+      const calendar = calendars.find(c => c.calendarId === eventData.calendarId);
+      
+      if (calendar) {
+        const calendarService = new CalendarService(
+          config.google.credentials,
+          [{ name: calendar.name, id: calendar.calendarId }]
+        );
+        
+        calendarLink = await calendarService.createEvent(eventData);
+      }
+    }
     
-    const event = await eventManager.createEvent({
-      id: eventId,
-      title,
-      description: description || '',
-      dateTime,
-      duration: duration || 60,
-      maxParticipants: maxParticipants || 0,
-      roles: roles || [],
-      createdBy: 'web',
-      guildId: guildId || null,
-      addToCalendar,
-      calendarId
+    // Create event in database
+    await eventManager.createEvent({
+      ...eventData,
+      calendarLink: calendarLink || eventData.calendarLink
     });
     
-    res.json({ success: true, event });
+    // Post to Discord if channel is configured
+    const client = global.discordClient;
+    if (client && eventData.guildId) {
+      const { GuildConfig } = require('./src/models');
+      const guildConfig = await GuildConfig.findByPk(eventData.guildId);
+      
+      if (guildConfig && guildConfig.eventChannelId) {
+        const channel = await client.channels.fetch(guildConfig.eventChannelId);
+        if (channel) {
+          const { createEventEmbed } = require('./src/utils/embeds');
+          const embed = createEventEmbed(await eventManager.getEvent(eventData.id));
+          await channel.send({ embeds: [embed] });
+        }
+      }
+    }
+    
+    res.json({ success: true, eventId: eventData.id });
   } catch (error) {
     console.error('Error creating event:', error);
-    res.status(500).json({ error: 'Failed to create event' });
+    res.status(500).json({ success: false, error: error.message });
   }
 });
 
-app.put('/api/events/:id', verifySession, async (req, res) => {
+app.delete('/api/events/:eventId', verifySession, async (req, res) => {
   try {
-    const { title, description, dateTime, duration, maxParticipants, roles } = req.body;
-    
-    const updates = {};
-    if (title !== undefined) updates.title = title;
-    if (description !== undefined) updates.description = description;
-    if (dateTime !== undefined) updates.dateTime = dateTime;
-    if (duration !== undefined) updates.duration = duration;
-    if (maxParticipants !== undefined) updates.maxParticipants = maxParticipants;
-    if (roles !== undefined) updates.roles = roles;
-    
-    const event = await eventManager.updateEvent(req.params.id, updates);
-    res.json({ success: true, event });
-  } catch (error) {
-    console.error('Error updating event:', error);
-    res.status(500).json({ error: 'Failed to update event' });
-  }
-});
-
-app.delete('/api/events/:id', verifySession, async (req, res) => {
-  try {
-    await eventManager.deleteEvent(req.params.id);
+    const { eventId } = req.params;
+    await eventManager.deleteEvent(eventId);
     res.json({ success: true });
   } catch (error) {
     console.error('Error deleting event:', error);
-    res.status(500).json({ error: 'Failed to delete event' });
-  }
-});
-
-// ==================== PRESETS ROUTES ====================
-
-app.get('/api/presets', verifySession, async (req, res) => {
-  try {
-    const presets = await presetManager.loadPresets();
-    // Convert object to array format for frontend
-    const presetsArray = Object.entries(presets).map(([key, preset]) => ({
-      key,
-      ...preset
-    }));
-    res.json(presetsArray);
-  } catch (error) {
-    console.error('Error fetching presets:', error);
-    res.status(500).json({ error: 'Failed to fetch presets' });
-  }
-});
-
-app.post('/api/presets', verifySession, async (req, res) => {
-  try {
-    const { key, name, description, duration, maxParticipants, roles } = req.body;
-    
-    if (!key || !name || !duration) {
-      return res.status(400).json({ error: 'Key, name, and duration are required' });
-    }
-    
-    const preset = await presetManager.createPreset(key, {
-      name,
-      description: description || '',
-      duration,
-      maxParticipants: maxParticipants || 0,
-      roles: roles || []
-    });
-    
-    res.json({ success: true, preset });
-  } catch (error) {
-    console.error('Error creating preset:', error);
-    res.status(500).json({ error: error.message });
-  }
-});
-
-app.put('/api/presets/:key', verifySession, async (req, res) => {
-  try {
-    const { name, description, duration, maxParticipants, roles } = req.body;
-    
-    const preset = await presetManager.updatePreset(req.params.key, {
-      name,
-      description,
-      duration,
-      maxParticipants,
-      roles
-    });
-    
-    res.json({ success: true, preset });
-  } catch (error) {
-    console.error('Error updating preset:', error);
-    res.status(500).json({ error: error.message });
-  }
-});
-
-app.delete('/api/presets/:key', verifySession, async (req, res) => {
-  try {
-    await presetManager.deletePreset(req.params.key);
-    res.json({ success: true });
-  } catch (error) {
-    console.error('Error deleting preset:', error);
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ success: false, error: error.message });
   }
 });
 
 app.post('/api/events/from-preset', verifySession, async (req, res) => {
   try {
-    const { presetKey, title, dateTime, guildId, addToCalendar, calendarId } = req.body;
-    
-    if (!presetKey || !dateTime) {
-      return res.status(400).json({ error: 'Preset key and dateTime are required' });
-    }
+    const { presetKey, dateTime, guildId } = req.body;
     
     const preset = await presetManager.getPreset(presetKey);
     if (!preset) {
-      return res.status(404).json({ error: 'Preset not found' });
+      return res.status(404).json({ success: false, error: 'Preset not found' });
     }
     
     const eventId = `event_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
     
-    const event = await eventManager.createEvent({
+    await eventManager.createEvent({
       id: eventId,
-      title: title || preset.name,
+      title: preset.name,
       description: preset.description,
       dateTime,
       duration: preset.duration,
       maxParticipants: preset.maxParticipants,
       roles: preset.roles,
-      createdBy: 'web',
-      guildId: guildId || null,
-      addToCalendar,
-      calendarId
+      createdBy: req.body.createdBy || 'web_interface',
+      guildId: guildId || null
     });
     
-    res.json({ success: true, event });
+    res.json({ success: true, eventId });
   } catch (error) {
     console.error('Error creating event from preset:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// ==================== PRESETS ====================
+
+app.get('/api/presets', verifySession, async (req, res) => {
+  try {
+    const presets = await presetManager.getAllPresets();
+    res.json(Object.values(presets));
+  } catch (error) {
+    console.error('Error loading presets:', error);
     res.status(500).json({ error: error.message });
   }
 });
 
-// ==================== CONFIGURATION ROUTES ====================
-
-app.get('/api/event-channel/:guildId', verifySession, async (req, res) => {
+app.post('/api/presets', verifySession, async (req, res) => {
   try {
-    const channelId = await eventsConfig.getEventChannel(req.params.guildId);
-    res.json({ channelId });
-  } catch (error) {
-    console.error('Error fetching event channel:', error);
-    res.status(500).json({ error: 'Failed to fetch event channel' });
-  }
-});
-
-app.post('/api/event-channel/:guildId', verifySession, async (req, res) => {
-  try {
-    const { channelId } = req.body;
-    await eventsConfig.setEventChannel(req.params.guildId, channelId);
+    const presetData = req.body;
+    await presetManager.createPreset(presetData);
     res.json({ success: true });
   } catch (error) {
-    console.error('Error setting event channel:', error);
-    res.status(500).json({ error: 'Failed to set event channel' });
+    console.error('Error creating preset:', error);
+    res.status(500).json({ success: false, error: error.message });
   }
 });
 
-app.delete('/api/event-channel/:guildId', verifySession, async (req, res) => {
+app.delete('/api/presets/:presetKey', verifySession, async (req, res) => {
   try {
-    await eventsConfig.removeEventChannel(req.params.guildId);
+    const { presetKey } = req.params;
+    await presetManager.deletePreset(presetKey);
     res.json({ success: true });
   } catch (error) {
-    console.error('Error removing event channel:', error);
-    res.status(500).json({ error: 'Failed to remove event channel' });
+    console.error('Error deleting preset:', error);
+    res.status(500).json({ success: false, error: error.message });
   }
 });
 
-app.get('/api/streaming/:guildId', verifySession, async (req, res) => {
+// ==================== GOOGLE CALENDAR ====================
+
+// Helper function to get all calendar configs
+async function getAllCalendarConfigs() {
+  const { CalendarConfig } = require('./src/models');
+  const configs = await CalendarConfig.findAll();
+  return configs.map(c => ({
+    id: c.id,
+    name: c.name,
+    calendarId: c.calendarId,
+    createdAt: c.createdAt
+  }));
+}
+
+app.get('/api/calendars/status', verifySession, async (req, res) => {
   try {
-    const config = await streamingConfig.getGuildConfig(req.params.guildId);
-    res.json(config || {});
+    const isConfigured = await googleCalendar.isConfigured();
+    const calendars = await getAllCalendarConfigs();
+    const hasIcalCalendars = calendars.some(cal => 
+      cal.calendarId.startsWith('http://') || cal.calendarId.startsWith('https://')
+    );
+    
+    res.json({ 
+      configured: isConfigured,
+      hasIcalCalendars,
+      supportsIcal: true
+    });
   } catch (error) {
-    console.error('Error fetching streaming config:', error);
-    res.status(500).json({ error: 'Failed to fetch streaming config' });
+    res.json({ 
+      configured: false, 
+      hasIcalCalendars: false,
+      supportsIcal: true,
+      error: error.message 
+    });
   }
 });
-
-app.post('/api/streaming/:guildId/channel', verifySession, async (req, res) => {
-  try {
-    const { channelId } = req.body;
-    await streamingConfig.setNotificationChannel(req.params.guildId, channelId);
-    res.json({ success: true });
-  } catch (error) {
-    console.error('Error setting notification channel:', error);
-    res.status(500).json({ error: 'Failed to set notification channel' });
-  }
-});
-
-// ==================== GOOGLE CALENDAR ROUTES ====================
 
 app.get('/api/calendars', verifySession, async (req, res) => {
   try {
     const calendars = await getAllCalendarConfigs();
     res.json(calendars);
   } catch (error) {
-    console.error('Error fetching calendars:', error);
-    res.status(500).json({ error: 'Failed to fetch calendars' });
+    console.error('Error loading calendars:', error);
+    res.status(500).json({ error: error.message });
   }
 });
 
 app.get('/api/calendars/available', verifySession, async (req, res) => {
   try {
-    const isConfigured = await googleCalendar.isConfigured();
-    if (!isConfigured) {
-      return res.status(400).json({ error: 'Google Calendar not configured. Please add credentials file.' });
+    if (!await googleCalendar.isConfigured()) {
+      return res.status(400).json({ error: 'Google Calendar not configured' });
     }
-
+    
     const calendars = await googleCalendar.listCalendars();
     res.json(calendars);
   } catch (error) {
-    console.error('Error fetching available calendars:', error);
-    res.status(500).json({ error: 'Failed to fetch available calendars: ' + error.message });
+    console.error('Error listing calendars:', error);
+    res.status(500).json({ error: error.message });
   }
 });
 
 app.post('/api/calendars', verifySession, async (req, res) => {
   try {
     const { name, calendarId } = req.body;
-
-    if (!name || !calendarId) {
-      return res.status(400).json({ error: 'Name and calendar ID are required' });
-    }
-
-    const calendar = await createCalendarConfig(name, calendarId);
-    res.json({ success: true, calendar });
+    
+    const { CalendarConfig } = require('./src/models');
+    await CalendarConfig.create({ name, calendarId });
+    
+    res.json({ success: true });
   } catch (error) {
-    console.error('Error creating calendar config:', error);
-    res.status(500).json({ error: error.message });
+    console.error('Error adding calendar:', error);
+    res.status(500).json({ success: false, error: error.message });
   }
 });
 
@@ -396,178 +304,424 @@ app.put('/api/calendars/:id', verifySession, async (req, res) => {
   try {
     const { id } = req.params;
     const { name, calendarId } = req.body;
-
-    if (!name || !calendarId) {
-      return res.status(400).json({ error: 'Name and calendar ID are required' });
-    }
-
-    const calendar = await updateCalendarConfig(parseInt(id), name, calendarId);
-    res.json({ success: true, calendar });
+    
+    const { CalendarConfig } = require('./src/models');
+    await CalendarConfig.update({ name, calendarId }, { where: { id } });
+    
+    res.json({ success: true });
   } catch (error) {
-    console.error('Error updating calendar config:', error);
-    res.status(500).json({ error: error.message });
+    console.error('Error updating calendar:', error);
+    res.status(500).json({ success: false, error: error.message });
   }
 });
 
 app.delete('/api/calendars/:id', verifySession, async (req, res) => {
   try {
     const { id } = req.params;
-    await deleteCalendarConfig(parseInt(id));
+    
+    const { CalendarConfig } = require('./src/models');
+    await CalendarConfig.destroy({ where: { id } });
+    
     res.json({ success: true });
   } catch (error) {
-    console.error('Error deleting calendar config:', error);
+    console.error('Error deleting calendar:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.post('/api/calendars/manual-sync', verifySession, async (req, res) => {
+  try {
+    const CalendarService = require('./src/services/calendar');
+    const { config } = require('./src/config');
+    
+    // Get all configured calendars from database
+    const calendars = await getAllCalendarConfigs();
+    
+    if (calendars.length === 0) {
+      return res.json({
+        success: false,
+        error: 'No calendars configured'
+      });
+    }
+    
+    // Create calendar service with configured calendars
+    const calendarService = new CalendarService(
+      config.google.credentials,
+      calendars.map(c => ({ name: c.name, id: c.calendarId }))
+    );
+    
+    // Sync events (168 hours = 1 week ahead)
+    const result = await calendarService.syncEvents(168);
+    
+    if (!result.success) {
+      return res.json({
+        success: false,
+        error: result.message
+      });
+    }
+    
+    // Import events into database
+    let importedCount = 0;
+    for (const eventData of result.events) {
+      try {
+        const eventId = `gcal_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+        
+        // Check if event already exists by calendarSourceId
+        const existingEvent = await eventManager.getAllEvents();
+        const exists = Object.values(existingEvent).find(e => 
+          e.calendarSourceId === eventData.calendarSourceId
+        );
+        
+        if (!exists) {
+          await eventManager.createEvent({
+            id: eventId,
+            title: eventData.calendarEvent.summary || 'Untitled Event',
+            description: eventData.calendarEvent.description || '',
+            dateTime: eventData.calendarEvent.start.dateTime,
+            duration: eventData.duration,
+            maxParticipants: 0,
+            roles: [],
+            createdBy: 'calendar_sync',
+            calendarLink: eventData.calendarEvent.htmlLink,
+            calendarEventId: eventData.calendarEvent.id,
+            calendarSource: eventData.calendarSource,
+            calendarSourceId: eventData.calendarSourceId
+          });
+          importedCount++;
+        }
+      } catch (error) {
+        console.error('Error importing event:', error);
+      }
+    }
+    
+    res.json({
+      success: true,
+      message: result.message,
+      imported: importedCount,
+      total: result.events.length
+    });
+  } catch (error) {
+    console.error('Error during manual sync:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+// ==================== GUILD CONFIGURATION ====================
+
+app.get('/api/guilds', verifySession, async (req, res) => {
+  try {
+    const client = global.discordClient;
+    if (!client) {
+      return res.json([]);
+    }
+    
+    const guilds = client.guilds.cache.map(guild => ({
+      id: guild.id,
+      name: guild.name,
+      icon: guild.iconURL()
+    }));
+    
+    res.json(guilds);
+  } catch (error) {
+    console.error('Error loading guilds:', error);
     res.status(500).json({ error: error.message });
   }
 });
 
-app.get('/api/calendars/status', verifySession, async (req, res) => {
+app.get('/api/event-channel/:guildId', verifySession, async (req, res) => {
   try {
-    const isConfigured = await googleCalendar.isConfigured();
-    res.json({ configured: isConfigured });
+    const { guildId } = req.params;
+    const { GuildConfig } = require('./src/models');
+    
+    const config = await GuildConfig.findByPk(guildId);
+    res.json({ channelId: config?.eventChannelId || '' });
   } catch (error) {
-    res.json({ configured: false, error: error.message });
+    console.error('Error loading event channel:', error);
+    res.status(500).json({ error: error.message });
   }
 });
 
-// ==================== STATS & STATUS ROUTES ====================
-
-app.get('/api/stats', verifySession, async (req, res) => {
+app.post('/api/event-channel/:guildId', verifySession, async (req, res) => {
   try {
-    const events = await eventManager.getAllEvents();
-    const now = new Date();
-    const upcoming = events.filter(e => new Date(e.dateTime) > now);
+    const { guildId } = req.params;
+    const { channelId } = req.body;
+    const { GuildConfig } = require('./src/models');
     
-    const totalSignups = events.reduce((sum, event) => {
-      return sum + Object.keys(event.signups || {}).length;
-    }, 0);
+    await GuildConfig.upsert({
+      guildId,
+      eventChannelId: channelId
+    });
     
-    const presets = await presetManager.loadPresets();
-    const presetsCount = Object.keys(presets).length;
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Error saving event channel:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.delete('/api/event-channel/:guildId', verifySession, async (req, res) => {
+  try {
+    const { guildId } = req.params;
+    const { GuildConfig } = require('./src/models');
+    
+    await GuildConfig.update(
+      { eventChannelId: null },
+      { where: { guildId } }
+    );
+    
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Error clearing event channel:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// ==================== STREAMING CONFIGURATION ====================
+
+app.get('/api/streaming/:guildId', verifySession, async (req, res) => {
+  try {
+    const { guildId } = req.params;
+    const { StreamingConfig } = require('./src/models');
+    
+    const config = await StreamingConfig.findByPk(guildId);
+    
+    if (!config) {
+      return res.json({
+        notificationChannelId: '',
+        twitch: { streamers: [] },
+        youtube: { channels: [] }
+      });
+    }
     
     res.json({
-      totalEvents: events.length,
-      upcomingEvents: upcoming.length,
-      totalSignups,
-      totalPresets: presetsCount
+      notificationChannelId: config.notificationChannelId || '',
+      twitch: {
+        streamers: config.twitchStreamers || []
+      },
+      youtube: {
+        channels: config.youtubeChannels || []
+      }
     });
   } catch (error) {
-    console.error('Error fetching stats:', error);
-    res.status(500).json({ error: 'Failed to fetch stats' });
+    console.error('Error loading streaming config:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post('/api/streaming/:guildId/channel', verifySession, async (req, res) => {
+  try {
+    const { guildId } = req.params;
+    const { channelId } = req.body;
+    const { StreamingConfig } = require('./src/models');
+    
+    await StreamingConfig.upsert({
+      guildId,
+      notificationChannelId: channelId
+    });
+    
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Error saving notification channel:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.post('/api/streaming/:guildId/twitch', verifySession, async (req, res) => {
+  try {
+    const { guildId } = req.params;
+    const { streamers } = req.body;
+    
+    if (!Array.isArray(streamers)) {
+      return res.status(400).json({ error: 'Streamers must be an array' });
+    }
+    
+    const { StreamingConfig } = require('./src/models');
+    const dbConfig = await StreamingConfig.findByPk(guildId);
+    
+    if (dbConfig) {
+      await dbConfig.update({
+        twitchStreamers: streamers,
+        twitchEnabled: streamers.length > 0
+      });
+    } else {
+      await StreamingConfig.create({
+        guildId,
+        twitchStreamers: streamers,
+        twitchEnabled: streamers.length > 0
+      });
+    }
+    
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Error saving Twitch config:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post('/api/streaming/:guildId/youtube', verifySession, async (req, res) => {
+  try {
+    const { guildId } = req.params;
+    const { channels } = req.body;
+    
+    if (!Array.isArray(channels)) {
+      return res.status(400).json({ error: 'Channels must be an array' });
+    }
+    
+    const { StreamingConfig } = require('./src/models');
+    const dbConfig = await StreamingConfig.findByPk(guildId);
+    
+    if (dbConfig) {
+      await dbConfig.update({
+        youtubeChannels: channels,
+        youtubeEnabled: channels.length > 0
+      });
+    } else {
+      await StreamingConfig.create({
+        guildId,
+        youtubeChannels: channels,
+        youtubeEnabled: channels.length > 0
+      });
+    }
+    
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Error saving YouTube config:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ==================== BOT CONTROL ====================
+
+app.get('/api/bot/status', verifySession, async (req, res) => {
+  try {
+    const client = global.discordClient;
+    
+    if (!client) {
+      return res.json({
+        status: 'Offline',
+        uptime: 0,
+        guildCount: 0,
+        autoSync: { enabled: false }
+      });
+    }
+    
+    res.json({
+      status: client.ws.status === 0 ? 'Online' : 'Offline',
+      uptime: process.uptime(),
+      guildCount: client.guilds.cache.size,
+      autoSync: {
+        enabled: global.autoSyncEnabled || false
+      }
+    });
+  } catch (error) {
+    console.error('Error loading bot status:', error);
+    res.status(500).json({ error: error.message });
   }
 });
 
 app.get('/api/autosync/status', verifySession, async (req, res) => {
   try {
-    const config = await AutoSyncConfig.findOne();
-    if (config) {
+    res.json({
+      enabled: global.autoSyncEnabled || false,
+      guildId: global.autoSyncGuildId || null,
+      channelId: global.autoSyncChannelId || null,
+      lastSync: global.lastSyncTime || null
+    });
+  } catch (error) {
+    console.error('Error loading autosync status:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.get('/api/bot/pm2-status', verifySession, async (req, res) => {
+  try {
+    const { execSync } = require('child_process');
+    
+    try {
+      // Check if PM2 is installed and running
+      const pm2List = execSync('pm2 jlist', { encoding: 'utf8', stdio: ['pipe', 'pipe', 'ignore'] });
+      const processes = JSON.parse(pm2List);
+      
+      // Look for discord-event-bot process
+      const botProcess = processes.find(p => p.name === 'discord-event-bot');
+      
       res.json({
-        enabled: config.enabled,
-        channelId: config.channelId,
-        guildId: config.guildId,
-        lastSync: config.lastSync
+        pm2Running: !!botProcess,
+        processInfo: botProcess || null
       });
-    } else {
-      res.json({ enabled: false });
+    } catch (error) {
+      // PM2 not installed or no processes
+      res.json({
+        pm2Running: false,
+        processInfo: null
+      });
     }
   } catch (error) {
-    console.error('Error fetching autosync status:', error);
-    res.status(500).json({ error: 'Failed to fetch autosync status' });
+    console.error('Error checking PM2 status:', error);
+    res.json({
+      pm2Running: false,
+      processInfo: null
+    });
   }
 });
 
-app.get('/api/guilds', verifySession, (req, res) => {
+app.post('/api/bot/restart', verifySession, async (req, res) => {
   try {
-    const fs = require('fs');
-    const guildsPath = path.join(__dirname, 'data', 'guilds.json');
-    if (fs.existsSync(guildsPath)) {
-      delete require.cache[require.resolve(guildsPath)];
-      const guilds = require(guildsPath);
-      res.json(guilds);
-    } else {
-      res.json([]);
-    }
+    const { exec } = require('child_process');
+    
+    exec('pm2 restart discord-event-bot', (error, stdout, stderr) => {
+      if (error) {
+        console.error('Error restarting bot:', error);
+        return res.json({
+          success: false,
+          error: 'Failed to restart bot. Make sure bot is running in PM2.'
+        });
+      }
+      
+      res.json({
+        success: true,
+        message: 'Bot restart initiated'
+      });
+    });
   } catch (error) {
-    console.error('Error fetching guilds:', error);
-    res.json([]);
+    console.error('Error restarting bot:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
   }
 });
 
-app.get('/api/channels', verifySession, (req, res) => {
+// ==================== COMMANDS ====================
+
+app.get('/api/commands', verifySession, async (req, res) => {
   try {
-    const fs = require('fs');
-    const channelsPath = path.join(__dirname, 'data', 'channels.json');
-    if (fs.existsSync(channelsPath)) {
-      delete require.cache[require.resolve(channelsPath)];
-      const channels = require(channelsPath);
-      res.json(channels);
-    } else {
-      res.json({});
+    const client = global.discordClient;
+    if (!client) {
+      return res.json([]);
     }
+    
+    const commands = client.commands || new Map();
+    const commandList = Array.from(commands.values()).map(cmd => ({
+      name: cmd.data.name,
+      description: cmd.data.description,
+      category: cmd.category || 'General'
+    }));
+    
+    res.json(commandList);
   } catch (error) {
-    console.error('Error fetching channels:', error);
-    res.json({});
+    console.error('Error loading commands:', error);
+    res.status(500).json({ error: error.message });
   }
 });
 
-// ==================== BOT CONTROL ROUTES ====================
+// ==================== SERVER STARTUP ====================
 
-app.get('/api/bot/status', verifySession, (req, res) => {
-  try {
-    const fs = require('fs');
-    const statusPath = path.join(__dirname, 'data', 'bot-status.json');
-    if (fs.existsSync(statusPath)) {
-      delete require.cache[require.resolve(statusPath)];
-      const status = require(statusPath);
-      res.json(status);
-    } else {
-      res.json({ status: 'unknown' });
-    }
-  } catch (error) {
-    console.error('Error fetching bot status:', error);
-    res.status(500).json({ error: 'Failed to fetch bot status' });
-  }
-});
-
-app.post('/api/bot/reload-commands', verifySession, (req, res) => {
-  res.json({ success: true, message: 'Command reload requested (requires bot implementation)' });
-});
-
-app.post('/api/bot/restart', verifySession, (req, res) => {
-  res.json({ success: true, message: 'Bot restart requested (requires bot implementation)' });
-});
-
-app.get('/api/commands', verifySession, (req, res) => {
-  const commands = [
-    { name: '/create', description: 'Create a new event', category: 'Events' },
-    { name: '/preset', description: 'Create event from preset', category: 'Events' },
-    { name: '/list', description: 'List all upcoming events', category: 'Events' },
-    { name: '/eventinfo', description: 'Show detailed information about an event', category: 'Events' },
-    { name: '/delete', description: 'Delete an event', category: 'Events' },
-    { name: '/addrole', description: 'Add a role to an existing event', category: 'Events' },
-    { name: '/presets', description: 'List all available event presets', category: 'Presets' },
-    { name: '/deletepreset', description: 'Delete an event preset', category: 'Presets' },
-    { name: '/sync', description: 'Sync events from Google Calendar', category: 'Calendar' },
-    { name: '/calendars', description: 'List configured Google Calendars', category: 'Calendar' },
-    { name: '/autosync', description: 'Enable/disable automatic calendar syncing', category: 'Calendar' },
-    { name: '/set-event-channel', description: 'Set the channel for event postings', category: 'Configuration' },
-    { name: '/event-channel', description: 'View current event channel', category: 'Configuration' },
-    { name: '/clear-event-channel', description: 'Clear event channel setting', category: 'Configuration' },
-    { name: '/setup-streaming', description: 'Set streaming notification channel', category: 'Streaming' },
-    { name: '/add-streamer', description: 'Add Twitch streamer to monitor', category: 'Streaming' },
-    { name: '/add-youtube', description: 'Add YouTube channel to monitor', category: 'Streaming' },
-    { name: '/list-streamers', description: 'List monitored Twitch streamers', category: 'Streaming' },
-    { name: '/list-youtube', description: 'List monitored YouTube channels', category: 'Streaming' },
-    { name: '/help', description: 'Show help information', category: 'General' }
-  ];
-  
-  res.json(commands);
-});
-
-// Start server
 app.listen(PORT, () => {
-  console.log(`🌐 Web server running at http://localhost:${PORT}`);
-  console.log(`📝 Default credentials: admin / admin (change in .env file)`);
-  console.log(`📅 Calendar configuration: Manage via web UI (Settings → Google Calendar)`);
+  console.log(`🌐 Web interface running on http://localhost:${PORT}`);
 });
 
 module.exports = app;

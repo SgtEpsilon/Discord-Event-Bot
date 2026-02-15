@@ -553,6 +553,10 @@ body {
     font-size: 18px;
     color: var(--discord-text-primary);
     margin: 0;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
 }
 
 .calendar-badge {
@@ -568,6 +572,17 @@ body {
 
 .calendar-badge:hover {
     background: rgba(88, 101, 242, 0.3);
+}
+
+.ical-badge {
+    display: inline-block;
+    padding: 2px 8px;
+    background: rgba(0, 176, 244, 0.2);
+    color: #00b0f4;
+    border-radius: 4px;
+    font-size: 12px;
+    font-weight: 600;
+    vertical-align: middle;
 }
 
 .event-description {
@@ -706,11 +721,18 @@ body {
     margin-bottom: 6px;
 }
 
+.calendar-info h3 {
+    font-size: 16px;
+    color: var(--discord-text-primary);
+    margin-bottom: 6px;
+}
+
 .calendar-id {
     font-family: 'Courier New', monospace;
     font-size: 13px;
     color: var(--discord-text-muted);
     margin-bottom: 6px;
+    word-break: break-all;
 }
 
 .calendar-info small {
