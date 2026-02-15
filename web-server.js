@@ -1,9 +1,12 @@
 // web-server.js - Discord Event Bot Web Interface Server
 const express = require('express');
 const path = require('path');
-const { EventManager } = require('./src/managers/event-manager');
-const { PresetManager } = require('./src/managers/preset-manager');
-const { GoogleCalendar } = require('./src/services/google-calendar');
+const fs = require('fs');
+
+// FIXED IMPORTS - Use the actual file structure
+const EventManager = require('./src/services/eventManager');
+const PresetManager = require('./src/services/presetManager');
+const CalendarService = require('./src/services/calendar');
 const { config } = require('./src/config');
 
 const app = express();
@@ -16,7 +19,10 @@ app.use(express.static('public'));
 // Initialize managers
 const eventManager = new EventManager();
 const presetManager = new PresetManager();
-const googleCalendar = new GoogleCalendar();
+const calendarService = new CalendarService(
+  config.google.credentials,
+  config.google.calendars
+);
 
 // Session storage (in production, use Redis or database)
 const sessions = new Map();
@@ -65,10 +71,10 @@ app.get('/api/stats', verifySession, async (req, res) => {
     
     const upcomingEvents = events.filter(e => new Date(e.dateTime) > now).length;
     const totalSignups = events.reduce((sum, e) => 
-      sum + Object.keys(e.signups || {}).length, 0
+      sum + Object.values(e.signups || {}).reduce((total, arr) => total + arr.length, 0), 0
     );
     
-    const presets = await presetManager.getAllPresets();
+    const presets = await presetManager.loadPresets();
     
     res.json({
       totalEvents: events.length,
@@ -107,17 +113,11 @@ app.post('/api/events', verifySession, async (req, res) => {
     // Add to Google Calendar if requested
     let calendarLink = null;
     if (eventData.addToCalendar && eventData.calendarId) {
-      const CalendarService = require('./src/services/calendar');
-      const calendars = await getAllCalendarConfigs();
-      const calendar = calendars.find(c => c.calendarId === eventData.calendarId);
-      
-      if (calendar) {
-        const calendarService = new CalendarService(
-          config.google.credentials,
-          [{ name: calendar.name, id: calendar.calendarId }]
-        );
-        
+      try {
         calendarLink = await calendarService.createEvent(eventData);
+      } catch (error) {
+        console.error('Error adding to Google Calendar:', error);
+        // Continue without calendar link
       }
     }
     
@@ -126,22 +126,6 @@ app.post('/api/events', verifySession, async (req, res) => {
       ...eventData,
       calendarLink: calendarLink || eventData.calendarLink
     });
-    
-    // Post to Discord if channel is configured
-    const client = global.discordClient;
-    if (client && eventData.guildId) {
-      const { GuildConfig } = require('./src/models');
-      const guildConfig = await GuildConfig.findByPk(eventData.guildId);
-      
-      if (guildConfig && guildConfig.eventChannelId) {
-        const channel = await client.channels.fetch(guildConfig.eventChannelId);
-        if (channel) {
-          const { createEventEmbed } = require('./src/utils/embeds');
-          const embed = createEventEmbed(await eventManager.getEvent(eventData.id));
-          await channel.send({ embeds: [embed] });
-        }
-      }
-    }
     
     res.json({ success: true, eventId: eventData.id });
   } catch (error) {
@@ -195,8 +179,11 @@ app.post('/api/events/from-preset', verifySession, async (req, res) => {
 
 app.get('/api/presets', verifySession, async (req, res) => {
   try {
-    const presets = await presetManager.getAllPresets();
-    res.json(Object.values(presets));
+    const presets = await presetManager.loadPresets();
+    res.json(Object.entries(presets).map(([key, preset]) => ({
+      key,
+      ...preset
+    })));
   } catch (error) {
     console.error('Error loading presets:', error);
     res.status(500).json({ error: error.message });
@@ -205,8 +192,8 @@ app.get('/api/presets', verifySession, async (req, res) => {
 
 app.post('/api/presets', verifySession, async (req, res) => {
   try {
-    const presetData = req.body;
-    await presetManager.createPreset(presetData);
+    const { key, ...presetData } = req.body;
+    await presetManager.createPreset(key, presetData);
     res.json({ success: true });
   } catch (error) {
     console.error('Error creating preset:', error);
@@ -227,24 +214,12 @@ app.delete('/api/presets/:presetKey', verifySession, async (req, res) => {
 
 // ==================== GOOGLE CALENDAR ====================
 
-// Helper function to get all calendar configs
-async function getAllCalendarConfigs() {
-  const { CalendarConfig } = require('./src/models');
-  const configs = await CalendarConfig.findAll();
-  return configs.map(c => ({
-    id: c.id,
-    name: c.name,
-    calendarId: c.calendarId,
-    createdAt: c.createdAt
-  }));
-}
-
 app.get('/api/calendars/status', verifySession, async (req, res) => {
   try {
-    const isConfigured = await googleCalendar.isConfigured();
-    const calendars = await getAllCalendarConfigs();
+    const isConfigured = calendarService.isEnabled();
+    const calendars = calendarService.getCalendars();
     const hasIcalCalendars = calendars.some(cal => 
-      cal.calendarId.startsWith('http://') || cal.calendarId.startsWith('https://')
+      cal.id.startsWith('http://') || cal.id.startsWith('https://')
     );
     
     res.json({ 
@@ -264,7 +239,14 @@ app.get('/api/calendars/status', verifySession, async (req, res) => {
 
 app.get('/api/calendars', verifySession, async (req, res) => {
   try {
-    const calendars = await getAllCalendarConfigs();
+    const { CalendarConfig } = require('./src/models');
+    const configs = await CalendarConfig.findAll();
+    const calendars = configs.map(c => ({
+      id: c.id,
+      name: c.name,
+      calendarId: c.calendarId,
+      createdAt: c.createdAt
+    }));
     res.json(calendars);
   } catch (error) {
     console.error('Error loading calendars:', error);
@@ -272,27 +254,11 @@ app.get('/api/calendars', verifySession, async (req, res) => {
   }
 });
 
-app.get('/api/calendars/available', verifySession, async (req, res) => {
-  try {
-    if (!await googleCalendar.isConfigured()) {
-      return res.status(400).json({ error: 'Google Calendar not configured' });
-    }
-    
-    const calendars = await googleCalendar.listCalendars();
-    res.json(calendars);
-  } catch (error) {
-    console.error('Error listing calendars:', error);
-    res.status(500).json({ error: error.message });
-  }
-});
-
 app.post('/api/calendars', verifySession, async (req, res) => {
   try {
     const { name, calendarId } = req.body;
-    
     const { CalendarConfig } = require('./src/models');
     await CalendarConfig.create({ name, calendarId });
-    
     res.json({ success: true });
   } catch (error) {
     console.error('Error adding calendar:', error);
@@ -304,10 +270,8 @@ app.put('/api/calendars/:id', verifySession, async (req, res) => {
   try {
     const { id } = req.params;
     const { name, calendarId } = req.body;
-    
     const { CalendarConfig } = require('./src/models');
     await CalendarConfig.update({ name, calendarId }, { where: { id } });
-    
     res.json({ success: true });
   } catch (error) {
     console.error('Error updating calendar:', error);
@@ -318,10 +282,8 @@ app.put('/api/calendars/:id', verifySession, async (req, res) => {
 app.delete('/api/calendars/:id', verifySession, async (req, res) => {
   try {
     const { id } = req.params;
-    
     const { CalendarConfig } = require('./src/models');
     await CalendarConfig.destroy({ where: { id } });
-    
     res.json({ success: true });
   } catch (error) {
     console.error('Error deleting calendar:', error);
@@ -331,44 +293,19 @@ app.delete('/api/calendars/:id', verifySession, async (req, res) => {
 
 app.post('/api/calendars/manual-sync', verifySession, async (req, res) => {
   try {
-    const CalendarService = require('./src/services/calendar');
-    const { config } = require('./src/config');
-    
-    // Get all configured calendars from database
-    const calendars = await getAllCalendarConfigs();
-    
-    if (calendars.length === 0) {
-      return res.json({
-        success: false,
-        error: 'No calendars configured'
-      });
-    }
-    
-    // Create calendar service with configured calendars
-    const calendarService = new CalendarService(
-      config.google.credentials,
-      calendars.map(c => ({ name: c.name, id: c.calendarId }))
-    );
-    
-    // Sync events (168 hours = 1 week ahead)
     const result = await calendarService.syncEvents(168);
     
     if (!result.success) {
-      return res.json({
-        success: false,
-        error: result.message
-      });
+      return res.json({ success: false, error: result.message });
     }
     
-    // Import events into database
     let importedCount = 0;
     for (const eventData of result.events) {
       try {
         const eventId = `gcal_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
         
-        // Check if event already exists by calendarSourceId
-        const existingEvent = await eventManager.getAllEvents();
-        const exists = Object.values(existingEvent).find(e => 
+        const existingEvents = await eventManager.getAllEvents();
+        const exists = Object.values(existingEvents).find(e => 
           e.calendarSourceId === eventData.calendarSourceId
         );
         
@@ -402,10 +339,7 @@ app.post('/api/calendars/manual-sync', verifySession, async (req, res) => {
     });
   } catch (error) {
     console.error('Error during manual sync:', error);
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
+    res.status(500).json({ success: false, error: error.message });
   }
 });
 
@@ -413,18 +347,14 @@ app.post('/api/calendars/manual-sync', verifySession, async (req, res) => {
 
 app.get('/api/guilds', verifySession, async (req, res) => {
   try {
-    const client = global.discordClient;
-    if (!client) {
-      return res.json([]);
+    // Read from guilds.json file
+    const guildsPath = path.join(__dirname, 'data', 'guilds.json');
+    if (fs.existsSync(guildsPath)) {
+      const guildsData = JSON.parse(fs.readFileSync(guildsPath, 'utf8'));
+      res.json(guildsData);
+    } else {
+      res.json([]);
     }
-    
-    const guilds = client.guilds.cache.map(guild => ({
-      id: guild.id,
-      name: guild.name,
-      icon: guild.iconURL()
-    }));
-    
-    res.json(guilds);
   } catch (error) {
     console.error('Error loading guilds:', error);
     res.status(500).json({ error: error.message });
@@ -434,9 +364,8 @@ app.get('/api/guilds', verifySession, async (req, res) => {
 app.get('/api/event-channel/:guildId', verifySession, async (req, res) => {
   try {
     const { guildId } = req.params;
-    const { GuildConfig } = require('./src/models');
-    
-    const config = await GuildConfig.findByPk(guildId);
+    const { EventsConfig } = require('./src/models');
+    const config = await EventsConfig.findByPk(guildId);
     res.json({ channelId: config?.eventChannelId || '' });
   } catch (error) {
     console.error('Error loading event channel:', error);
@@ -448,13 +377,8 @@ app.post('/api/event-channel/:guildId', verifySession, async (req, res) => {
   try {
     const { guildId } = req.params;
     const { channelId } = req.body;
-    const { GuildConfig } = require('./src/models');
-    
-    await GuildConfig.upsert({
-      guildId,
-      eventChannelId: channelId
-    });
-    
+    const { EventsConfig } = require('./src/models');
+    await EventsConfig.upsert({ guildId, eventChannelId: channelId });
     res.json({ success: true });
   } catch (error) {
     console.error('Error saving event channel:', error);
@@ -465,13 +389,8 @@ app.post('/api/event-channel/:guildId', verifySession, async (req, res) => {
 app.delete('/api/event-channel/:guildId', verifySession, async (req, res) => {
   try {
     const { guildId } = req.params;
-    const { GuildConfig } = require('./src/models');
-    
-    await GuildConfig.update(
-      { eventChannelId: null },
-      { where: { guildId } }
-    );
-    
+    const { EventsConfig } = require('./src/models');
+    await EventsConfig.update({ eventChannelId: null }, { where: { guildId } });
     res.json({ success: true });
   } catch (error) {
     console.error('Error clearing event channel:', error);
@@ -485,7 +404,6 @@ app.get('/api/streaming/:guildId', verifySession, async (req, res) => {
   try {
     const { guildId } = req.params;
     const { StreamingConfig } = require('./src/models');
-    
     const config = await StreamingConfig.findByPk(guildId);
     
     if (!config) {
@@ -498,12 +416,8 @@ app.get('/api/streaming/:guildId', verifySession, async (req, res) => {
     
     res.json({
       notificationChannelId: config.notificationChannelId || '',
-      twitch: {
-        streamers: config.twitchStreamers || []
-      },
-      youtube: {
-        channels: config.youtubeChannels || []
-      }
+      twitch: { streamers: config.twitchStreamers || [] },
+      youtube: { channels: config.youtubeChannels || [] }
     });
   } catch (error) {
     console.error('Error loading streaming config:', error);
@@ -516,12 +430,7 @@ app.post('/api/streaming/:guildId/channel', verifySession, async (req, res) => {
     const { guildId } = req.params;
     const { channelId } = req.body;
     const { StreamingConfig } = require('./src/models');
-    
-    await StreamingConfig.upsert({
-      guildId,
-      notificationChannelId: channelId
-    });
-    
+    await StreamingConfig.upsert({ guildId, notificationChannelId: channelId });
     res.json({ success: true });
   } catch (error) {
     console.error('Error saving notification channel:', error);
@@ -597,25 +506,18 @@ app.post('/api/streaming/:guildId/youtube', verifySession, async (req, res) => {
 
 app.get('/api/bot/status', verifySession, async (req, res) => {
   try {
-    const client = global.discordClient;
-    
-    if (!client) {
-      return res.json({
-        status: 'Offline',
+    const statusPath = path.join(__dirname, 'data', 'bot-status.json');
+    if (fs.existsSync(statusPath)) {
+      const statusData = JSON.parse(fs.readFileSync(statusPath, 'utf8'));
+      res.json(statusData);
+    } else {
+      res.json({
+        status: 'Unknown',
         uptime: 0,
         guildCount: 0,
         autoSync: { enabled: false }
       });
     }
-    
-    res.json({
-      status: client.ws.status === 0 ? 'Online' : 'Offline',
-      uptime: process.uptime(),
-      guildCount: client.guilds.cache.size,
-      autoSync: {
-        enabled: global.autoSyncEnabled || false
-      }
-    });
   } catch (error) {
     console.error('Error loading bot status:', error);
     res.status(500).json({ error: error.message });
@@ -624,12 +526,24 @@ app.get('/api/bot/status', verifySession, async (req, res) => {
 
 app.get('/api/autosync/status', verifySession, async (req, res) => {
   try {
-    res.json({
-      enabled: global.autoSyncEnabled || false,
-      guildId: global.autoSyncGuildId || null,
-      channelId: global.autoSyncChannelId || null,
-      lastSync: global.lastSyncTime || null
-    });
+    const { AutoSyncConfig } = require('./src/models');
+    const config = await AutoSyncConfig.findOne({ where: { enabled: true } });
+    
+    if (config) {
+      res.json({
+        enabled: true,
+        guildId: config.guildId,
+        channelId: config.channelId,
+        lastSync: config.lastSync
+      });
+    } else {
+      res.json({
+        enabled: false,
+        guildId: null,
+        channelId: null,
+        lastSync: null
+      });
+    }
   } catch (error) {
     console.error('Error loading autosync status:', error);
     res.status(500).json({ error: error.message });
@@ -641,11 +555,8 @@ app.get('/api/bot/pm2-status', verifySession, async (req, res) => {
     const { execSync } = require('child_process');
     
     try {
-      // Check if PM2 is installed and running
       const pm2List = execSync('pm2 jlist', { encoding: 'utf8', stdio: ['pipe', 'pipe', 'ignore'] });
       const processes = JSON.parse(pm2List);
-      
-      // Look for discord-event-bot process
       const botProcess = processes.find(p => p.name === 'discord-event-bot');
       
       res.json({
@@ -653,7 +564,6 @@ app.get('/api/bot/pm2-status', verifySession, async (req, res) => {
         processInfo: botProcess || null
       });
     } catch (error) {
-      // PM2 not installed or no processes
       res.json({
         pm2Running: false,
         processInfo: null
@@ -699,19 +609,21 @@ app.post('/api/bot/restart', verifySession, async (req, res) => {
 
 app.get('/api/commands', verifySession, async (req, res) => {
   try {
-    const client = global.discordClient;
-    if (!client) {
-      return res.json([]);
-    }
+    // Return a static list of commands
+    const commands = [
+      { name: 'create', description: 'Create a custom event', category: 'Events' },
+      { name: 'preset', description: 'Create event from preset', category: 'Events' },
+      { name: 'presets', description: 'List all presets', category: 'Events' },
+      { name: 'addrole', description: 'Add role to event', category: 'Events' },
+      { name: 'list', description: 'List all events', category: 'Events' },
+      { name: 'delete', description: 'Delete an event', category: 'Events' },
+      { name: 'sync', description: 'Sync from Google Calendar', category: 'Calendar' },
+      { name: 'calendars', description: 'List calendars', category: 'Calendar' },
+      { name: 'autosync', description: 'Manage auto-sync', category: 'Calendar' },
+      { name: 'help', description: 'Show help', category: 'General' }
+    ];
     
-    const commands = client.commands || new Map();
-    const commandList = Array.from(commands.values()).map(cmd => ({
-      name: cmd.data.name,
-      description: cmd.data.description,
-      category: cmd.category || 'General'
-    }));
-    
-    res.json(commandList);
+    res.json(commands);
   } catch (error) {
     console.error('Error loading commands:', error);
     res.status(500).json({ error: error.message });

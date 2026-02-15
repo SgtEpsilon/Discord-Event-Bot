@@ -1,9 +1,11 @@
-// ecosystem.config.js - PM2 Configuration with URL display
+// ecosystem.config.js - PM2 Configuration with Dynamic Port from .env
+require('dotenv').config(); // Load .env file FIRST
+
 module.exports = {
   apps: [
     {
       name: 'discord-event-bot',
-      script: 'index.js',
+      script: 'src/bot.js', // FIXED: Changed from index.js
       instances: 1,
       autorestart: true,
       watch: false,
@@ -14,9 +16,7 @@ module.exports = {
       error_file: './logs/bot-error.log',
       out_file: './logs/bot-out.log',
       log_date_format: 'YYYY-MM-DD HH:mm:ss Z',
-      merge_logs: true,
-      // Post-start hook to display status
-      post_start: 'echo "📡 Discord Bot Started"'
+      merge_logs: true
     },
     {
       name: 'web-server',
@@ -27,14 +27,13 @@ module.exports = {
       max_memory_restart: '512M',
       env: {
         NODE_ENV: 'production',
+        // Dynamically read from .env (loaded above)
         WEB_PORT: process.env.WEB_PORT || 3000
       },
       error_file: './logs/web-error.log',
       out_file: './logs/web-out.log',
       log_date_format: 'YYYY-MM-DD HH:mm:ss Z',
-      merge_logs: true,
-      // Post-start hook to display URL
-      post_start: 'echo "🌐 Web Server: http://localhost:' + (process.env.WEB_PORT || 3000) + '"'
+      merge_logs: true
     }
   ],
   

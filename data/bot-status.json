@@ -1,18 +1,18 @@
 {
-  "uptime": 1805.7844497,
-  "uptimeFormatted": "30m",
+  "uptime": 36.5176247,
+  "uptimeFormatted": "0m",
   "memory": {
-    "rss": 139677696,
-    "heapTotal": 80306176,
-    "heapUsed": 77357880,
-    "external": 3834875,
-    "arrayBuffers": 76998
+    "rss": 137048064,
+    "heapTotal": 79777792,
+    "heapUsed": 74650448,
+    "external": 3959829,
+    "arrayBuffers": 77098
   },
   "nodeVersion": "v24.13.0",
-  "pid": 52104,
+  "pid": 38880,
   "botName": "Testbot#9379",
   "guildCount": 1,
-  "timestamp": "2026-02-15T04:32:34.313Z",
+  "timestamp": "2026-02-15T21:41:20.987Z",
   "status": "online",
   "autoSync": {
     "enabled": true,

@@ -459,7 +459,7 @@ function updateChannelList() {
 }
 
 // Bot ready event
-client.once('ready', async () => {
+client.once('clientReady', async () => {
   console.log('\n╔═══════════════════════════════════════════════════════╗');
   console.log(`║ 🤖 ${client.user.tag} is online!`);
   console.log('╠═══════════════════════════════════════════════════════╣');
