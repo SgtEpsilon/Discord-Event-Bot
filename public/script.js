@@ -25,7 +25,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
 async function checkAuth() {
     if (!authToken) {
-        showAuthSection();
+        showLoginModal();
         return;
     }
 
@@ -35,16 +35,19 @@ async function checkAuth() {
         });
 
         if (response.ok) {
-            hideAuthSection();
+            hideLoginModal();
+            updateAuthUI(true);
             loadDashboard();
         } else {
             authToken = null;
             localStorage.removeItem('authToken');
-            showAuthSection();
+            showLoginModal();
+            updateAuthUI(false);
         }
     } catch (error) {
         console.error('Auth check failed:', error);
-        showAuthSection();
+        showLoginModal();
+        updateAuthUI(false);
     }
 }
 
@@ -53,7 +56,7 @@ async function login() {
     const password = document.getElementById('passwordInput').value;
 
     if (!username || !password) {
-        showAlert('Please enter both username and password', 'error', 'authAlert');
+        showAlert('Please enter both username and password', 'error', 'loginAlert');
         return;
     }
 
@@ -69,30 +72,54 @@ async function login() {
         if (data.success) {
             authToken = data.token;
             localStorage.setItem('authToken', authToken);
-            hideAuthSection();
+            hideLoginModal();
+            updateAuthUI(true);
             loadDashboard();
-            showAlert('Successfully logged in!', 'success', 'authAlert');
+            showAlert('Successfully logged in!', 'success', 'loginAlert');
+            // Clear form
+            document.getElementById('usernameInput').value = '';
+            document.getElementById('passwordInput').value = '';
         } else {
-            showAlert(data.error || 'Login failed', 'error', 'authAlert');
+            showAlert(data.error || 'Login failed', 'error', 'loginAlert');
         }
     } catch (error) {
         console.error('Login error:', error);
-        showAlert('Login failed', 'error', 'authAlert');
+        showAlert('Login failed. Please try again.', 'error', 'loginAlert');
     }
 }
 
-function showAuthSection() {
-    document.querySelector('.api-key-section').style.display = 'block';
-    document.querySelector('.stats-grid').style.display = 'none';
-    document.getElementById('authStatus').textContent = '🔒 Not authenticated';
-    document.getElementById('authStatus').className = 'status unauthenticated';
+function logout() {
+    authToken = null;
+    localStorage.removeItem('authToken');
+    showLoginModal();
+    updateAuthUI(false);
+    // Clear sensitive data
+    document.getElementById('eventsContainer').innerHTML = '<div class="loading">Please login to view events</div>';
+    document.getElementById('presetsContainer').innerHTML = '<div class="loading">Please login to view presets</div>';
 }
 
-function hideAuthSection() {
-    document.querySelector('.api-key-section').style.display = 'none';
-    document.querySelector('.stats-grid').style.display = 'grid';
-    document.getElementById('authStatus').textContent = '✅ Authenticated';
-    document.getElementById('authStatus').className = 'status authenticated';
+function showLoginModal() {
+    document.getElementById('loginModal').classList.add('active');
+}
+
+function hideLoginModal() {
+    document.getElementById('loginModal').classList.remove('active');
+    hideAlert('loginAlert');
+}
+
+function updateAuthUI(isAuthenticated) {
+    const authStatus = document.getElementById('authStatus');
+    const logoutBtn = document.getElementById('logoutBtn');
+    
+    if (isAuthenticated) {
+        authStatus.textContent = '✅ Authenticated';
+        authStatus.className = 'status authenticated';
+        logoutBtn.style.display = 'block';
+    } else {
+        authStatus.textContent = '🔒 Not authenticated';
+        authStatus.className = 'status unauthenticated';
+        logoutBtn.style.display = 'none';
+    }
 }
 
 // ==================== DASHBOARD ====================
@@ -220,7 +247,7 @@ async function createEvent() {
 
         if (data.success) {
             showAlert('Event created successfully!', 'success', 'createEventAlert');
-            document.querySelector('form').reset();
+            document.querySelector('#create-event form').reset();
             
             // Reset datetime to 1 hour from now
             const now = new Date();
@@ -1100,7 +1127,9 @@ function switchTab(tabName) {
     }
 
     // Add active to clicked channel item
-    event.target.closest('.channel-item')?.classList.add('active');
+    if (event && event.target) {
+        event.target.closest('.channel-item')?.classList.add('active');
+    }
 
     // Load data for specific tabs
     if (tabName === 'events') loadEvents();

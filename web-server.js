@@ -2,12 +2,14 @@
 const express = require('express');
 const path = require('path');
 const bodyParser = require('body-parser');
-const eventManager = require('./src/services/eventManager');
-const presetManager = require('./src/services/presetManager');
-const eventsConfig = require('./src/services/eventsConfig');
-const streamingConfig = require('./src/services/streamingConfig');
 const { testConnection, initializeDatabase } = require('./src/config/database');
 const { AutoSyncConfig } = require('./src/models');
+
+// Import classes
+const EventManager = require('./src/services/eventManager');
+const PresetManager = require('./src/services/presetManager');
+const EventsConfigService = require('./src/services/eventsConfig');
+const StreamingConfigManager = require('./src/services/streamingConfig');
 const {
   GoogleCalendarService,
   getAllCalendarConfigs,
@@ -20,6 +22,11 @@ const {
 const app = express();
 const PORT = process.env.WEB_PORT || 3000;
 
+// Initialize services
+const eventManager = new EventManager();
+const presetManager = new PresetManager();
+const eventsConfig = new EventsConfigService();
+const streamingConfig = new StreamingConfigManager();
 const googleCalendar = new GoogleCalendarService();
 
 // Session storage (in-memory for simplicity)
@@ -101,7 +108,7 @@ app.get('/api/auth/check', verifySession, (req, res) => {
 
 app.get('/api/events', verifySession, async (req, res) => {
   try {
-    const events = await EventManager.getAllEvents();
+    const events = await eventManager.getAllEvents();
     res.json(events);
   } catch (error) {
     console.error('Error fetching events:', error);
@@ -111,7 +118,7 @@ app.get('/api/events', verifySession, async (req, res) => {
 
 app.get('/api/events/:id', verifySession, async (req, res) => {
   try {
-    const event = await EventManager.getEvent(req.params.id);
+    const event = await eventManager.getEvent(req.params.id);
     if (!event) {
       return res.status(404).json({ error: 'Event not found' });
     }
@@ -132,7 +139,7 @@ app.post('/api/events', verifySession, async (req, res) => {
     
     const eventId = `event_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
     
-    const event = await EventManager.createEvent({
+    const event = await eventManager.createEvent({
       id: eventId,
       title,
       description: description || '',
@@ -165,7 +172,7 @@ app.put('/api/events/:id', verifySession, async (req, res) => {
     if (maxParticipants !== undefined) updates.maxParticipants = maxParticipants;
     if (roles !== undefined) updates.roles = roles;
     
-    const event = await EventManager.updateEvent(req.params.id, updates);
+    const event = await eventManager.updateEvent(req.params.id, updates);
     res.json({ success: true, event });
   } catch (error) {
     console.error('Error updating event:', error);
@@ -175,7 +182,7 @@ app.put('/api/events/:id', verifySession, async (req, res) => {
 
 app.delete('/api/events/:id', verifySession, async (req, res) => {
   try {
-    await EventManager.deleteEvent(req.params.id);
+    await eventManager.deleteEvent(req.params.id);
     res.json({ success: true });
   } catch (error) {
     console.error('Error deleting event:', error);
@@ -187,8 +194,13 @@ app.delete('/api/events/:id', verifySession, async (req, res) => {
 
 app.get('/api/presets', verifySession, async (req, res) => {
   try {
-    const presets = await PresetManager.loadPresets();
-    res.json(presets);
+    const presets = await presetManager.loadPresets();
+    // Convert object to array format for frontend
+    const presetsArray = Object.entries(presets).map(([key, preset]) => ({
+      key,
+      ...preset
+    }));
+    res.json(presetsArray);
   } catch (error) {
     console.error('Error fetching presets:', error);
     res.status(500).json({ error: 'Failed to fetch presets' });
@@ -203,7 +215,7 @@ app.post('/api/presets', verifySession, async (req, res) => {
       return res.status(400).json({ error: 'Key, name, and duration are required' });
     }
     
-    const preset = await PresetManager.createPreset(key, {
+    const preset = await presetManager.createPreset(key, {
       name,
       description: description || '',
       duration,
@@ -222,7 +234,7 @@ app.put('/api/presets/:key', verifySession, async (req, res) => {
   try {
     const { name, description, duration, maxParticipants, roles } = req.body;
     
-    const preset = await PresetManager.updatePreset(req.params.key, {
+    const preset = await presetManager.updatePreset(req.params.key, {
       name,
       description,
       duration,
@@ -239,7 +251,7 @@ app.put('/api/presets/:key', verifySession, async (req, res) => {
 
 app.delete('/api/presets/:key', verifySession, async (req, res) => {
   try {
-    await PresetManager.deletePreset(req.params.key);
+    await presetManager.deletePreset(req.params.key);
     res.json({ success: true });
   } catch (error) {
     console.error('Error deleting preset:', error);
@@ -255,14 +267,14 @@ app.post('/api/events/from-preset', verifySession, async (req, res) => {
       return res.status(400).json({ error: 'Preset key and dateTime are required' });
     }
     
-    const preset = await PresetManager.getPreset(presetKey);
+    const preset = await presetManager.getPreset(presetKey);
     if (!preset) {
       return res.status(404).json({ error: 'Preset not found' });
     }
     
     const eventId = `event_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
     
-    const event = await EventManager.createEvent({
+    const event = await eventManager.createEvent({
       id: eventId,
       title: title || preset.name,
       description: preset.description,
@@ -421,7 +433,7 @@ app.get('/api/calendars/status', verifySession, async (req, res) => {
 
 app.get('/api/stats', verifySession, async (req, res) => {
   try {
-    const events = await EventManager.getAllEvents();
+    const events = await eventManager.getAllEvents();
     const now = new Date();
     const upcoming = events.filter(e => new Date(e.dateTime) > now);
     
@@ -429,13 +441,14 @@ app.get('/api/stats', verifySession, async (req, res) => {
       return sum + Object.keys(event.signups || {}).length;
     }, 0);
     
-    const presets = await PresetManager.loadPresets();
+    const presets = await presetManager.loadPresets();
+    const presetsCount = Object.keys(presets).length;
     
     res.json({
       totalEvents: events.length,
       upcomingEvents: upcoming.length,
       totalSignups,
-      totalPresets: presets.length
+      totalPresets: presetsCount
     });
   } catch (error) {
     console.error('Error fetching stats:', error);
@@ -464,8 +477,10 @@ app.get('/api/autosync/status', verifySession, async (req, res) => {
 
 app.get('/api/guilds', verifySession, (req, res) => {
   try {
+    const fs = require('fs');
     const guildsPath = path.join(__dirname, 'data', 'guilds.json');
-    if (require('fs').existsSync(guildsPath)) {
+    if (fs.existsSync(guildsPath)) {
+      delete require.cache[require.resolve(guildsPath)];
       const guilds = require(guildsPath);
       res.json(guilds);
     } else {
@@ -479,16 +494,18 @@ app.get('/api/guilds', verifySession, (req, res) => {
 
 app.get('/api/channels', verifySession, (req, res) => {
   try {
+    const fs = require('fs');
     const channelsPath = path.join(__dirname, 'data', 'channels.json');
-    if (require('fs').existsSync(channelsPath)) {
+    if (fs.existsSync(channelsPath)) {
+      delete require.cache[require.resolve(channelsPath)];
       const channels = require(channelsPath);
       res.json(channels);
     } else {
-      res.json([]);
+      res.json({});
     }
   } catch (error) {
     console.error('Error fetching channels:', error);
-    res.json([]);
+    res.json({});
   }
 });
 
@@ -496,8 +513,10 @@ app.get('/api/channels', verifySession, (req, res) => {
 
 app.get('/api/bot/status', verifySession, (req, res) => {
   try {
+    const fs = require('fs');
     const statusPath = path.join(__dirname, 'data', 'bot-status.json');
-    if (require('fs').existsSync(statusPath)) {
+    if (fs.existsSync(statusPath)) {
+      delete require.cache[require.resolve(statusPath)];
       const status = require(statusPath);
       res.json(status);
     } else {
@@ -519,19 +538,25 @@ app.post('/api/bot/restart', verifySession, (req, res) => {
 
 app.get('/api/commands', verifySession, (req, res) => {
   const commands = [
-    { name: '/event', description: 'Create a new event interactively', category: 'Events' },
+    { name: '/create', description: 'Create a new event', category: 'Events' },
+    { name: '/preset', description: 'Create event from preset', category: 'Events' },
     { name: '/list', description: 'List all upcoming events', category: 'Events' },
     { name: '/eventinfo', description: 'Show detailed information about an event', category: 'Events' },
     { name: '/delete', description: 'Delete an event', category: 'Events' },
     { name: '/addrole', description: 'Add a role to an existing event', category: 'Events' },
     { name: '/presets', description: 'List all available event presets', category: 'Presets' },
-    { name: '/createpreset', description: 'Create a new event preset', category: 'Presets' },
     { name: '/deletepreset', description: 'Delete an event preset', category: 'Presets' },
     { name: '/sync', description: 'Sync events from Google Calendar', category: 'Calendar' },
     { name: '/calendars', description: 'List configured Google Calendars', category: 'Calendar' },
     { name: '/autosync', description: 'Enable/disable automatic calendar syncing', category: 'Calendar' },
-    { name: '/seteventchannel', description: 'Set the channel for event postings', category: 'Configuration' },
-    { name: '/setnotificationchannel', description: 'Set the channel for streaming notifications', category: 'Configuration' },
+    { name: '/set-event-channel', description: 'Set the channel for event postings', category: 'Configuration' },
+    { name: '/event-channel', description: 'View current event channel', category: 'Configuration' },
+    { name: '/clear-event-channel', description: 'Clear event channel setting', category: 'Configuration' },
+    { name: '/setup-streaming', description: 'Set streaming notification channel', category: 'Streaming' },
+    { name: '/add-streamer', description: 'Add Twitch streamer to monitor', category: 'Streaming' },
+    { name: '/add-youtube', description: 'Add YouTube channel to monitor', category: 'Streaming' },
+    { name: '/list-streamers', description: 'List monitored Twitch streamers', category: 'Streaming' },
+    { name: '/list-youtube', description: 'List monitored YouTube channels', category: 'Streaming' },
     { name: '/help', description: 'Show help information', category: 'General' }
   ];
   
@@ -542,6 +567,7 @@ app.get('/api/commands', verifySession, (req, res) => {
 app.listen(PORT, () => {
   console.log(`🌐 Web server running at http://localhost:${PORT}`);
   console.log(`📝 Default credentials: admin / admin (change in .env file)`);
+  console.log(`📅 Calendar configuration: Manage via web UI (Settings → Google Calendar)`);
 });
 
 module.exports = app;
