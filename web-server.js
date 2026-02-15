@@ -2,8 +2,8 @@
 const express = require('express');
 const path = require('path');
 const bodyParser = require('body-parser');
-const EventManager = require('./src/services/eventManager');
-const PresetManager = require('./src/services/presetManager');
+const eventManager = require('./src/services/eventManager');
+const presetManager = require('./src/services/presetManager');
 const eventsConfig = require('./src/services/eventsConfig');
 const streamingConfig = require('./src/services/streamingConfig');
 const { testConnection, initializeDatabase } = require('./src/config/database');

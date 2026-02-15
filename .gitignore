@@ -35,3 +35,4 @@ Thumbs.db
 
 # Backups
 data/backup_*
+data/bot-status.json
