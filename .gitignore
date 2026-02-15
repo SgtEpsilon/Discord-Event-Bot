@@ -8,6 +8,9 @@ data/database.sqlite
 data/database.sqlite-shm
 data/database.sqlite-wal
 
+#Packages
+package-lock.json
+
 # Credentials
 data/calendar-credentials.json
 data/*.json

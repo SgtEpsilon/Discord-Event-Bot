@@ -1,5 +1,6 @@
 /* public/style.css - Complete styling for Discord Event Bot Manager */
 
+/* ==================== RESET & BASE ==================== */
 * {
     margin: 0;
     padding: 0;
@@ -79,6 +80,10 @@ body {
     align-items: center;
     justify-content: center;
     font-size: 16px;
+}
+
+.server-name {
+    color: #ffffff;
 }
 
 .channel-category-group {
@@ -234,6 +239,32 @@ body {
     font-size: 14px;
 }
 
+.login-form {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.login-form input {
+    width: 100%;
+    padding: 10px 12px;
+    background-color: #202225;
+    border: 1px solid #202225;
+    border-radius: 4px;
+    color: #dcddde;
+    font-size: 14px;
+    font-family: inherit;
+}
+
+.login-form input:focus {
+    outline: none;
+    border-color: #5865F2;
+}
+
+.login-form button {
+    width: 100%;
+}
+
 .api-key-input {
     display: flex;
     gap: 8px;
@@ -256,6 +287,7 @@ body {
     border-radius: 8px;
     padding: 20px;
     text-align: center;
+    border: 1px solid #202225;
 }
 
 .stat-label {
@@ -304,6 +336,16 @@ body {
     border-radius: 8px;
     padding: 16px;
     border: 1px solid #202225;
+    transition: all 0.2s;
+}
+
+.event-card:hover {
+    border-color: #404249;
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+}
+
+.event-card.past-event {
+    opacity: 0.7;
 }
 
 .event-header {
@@ -317,6 +359,22 @@ body {
     color: #ffffff;
     font-size: 18px;
     margin: 0;
+    flex: 1;
+}
+
+.calendar-badge {
+    background-color: #3ba55c;
+    color: #ffffff;
+    padding: 4px 8px;
+    border-radius: 4px;
+    font-size: 11px;
+    text-decoration: none;
+    white-space: nowrap;
+    margin-left: 8px;
+}
+
+.calendar-badge:hover {
+    background-color: #2d7d46;
 }
 
 .event-id {
@@ -328,6 +386,7 @@ body {
     font-family: 'Courier New', monospace;
 }
 
+.event-description,
 .event-body p {
     color: #b9bbbe;
     font-size: 14px;
@@ -339,6 +398,13 @@ body {
     flex-direction: column;
     gap: 8px;
     margin-bottom: 12px;
+}
+
+.event-time,
+.event-duration,
+.event-signups {
+    color: #b9bbbe;
+    font-size: 13px;
 }
 
 .meta-item {
@@ -389,6 +455,18 @@ body {
     border-radius: 8px;
     padding: 16px;
     border: 1px solid #202225;
+    transition: all 0.2s;
+}
+
+.preset-card:hover {
+    border-color: #404249;
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+}
+
+.preset-card h3 {
+    color: #ffffff;
+    font-size: 18px;
+    margin-bottom: 8px;
 }
 
 .preset-header {
@@ -411,8 +489,11 @@ body {
     font-size: 11px;
     color: #b9bbbe;
     font-family: 'Courier New', monospace;
+    display: block;
+    margin-bottom: 8px;
 }
 
+.preset-description,
 .preset-body p {
     color: #b9bbbe;
     font-size: 14px;
@@ -440,6 +521,25 @@ body {
     margin-top: 12px;
     padding-top: 12px;
     border-top: 1px solid #202225;
+}
+
+.preset-preview {
+    background-color: #2f3136;
+    border-radius: 6px;
+    padding: 16px;
+    margin-top: 16px;
+    border: 1px solid #202225;
+}
+
+.preset-preview h4 {
+    color: #ffffff;
+    margin-bottom: 8px;
+}
+
+.preset-preview p {
+    color: #b9bbbe;
+    font-size: 14px;
+    line-height: 1.6;
 }
 
 /* Forms */
@@ -490,6 +590,19 @@ body {
     font-size: 12px;
 }
 
+.checkbox-label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    cursor: pointer;
+    color: #b9bbbe;
+}
+
+.checkbox-label input[type="checkbox"] {
+    width: auto;
+    cursor: pointer;
+}
+
 /* Role Rows */
 .roles-container {
     display: flex;
@@ -519,14 +632,16 @@ body {
 
 /* Streamer Rows */
 .streamer-row,
-.youtube-row {
+.youtube-row,
+.twitch-row {
     display: flex;
     gap: 8px;
     margin-bottom: 8px;
 }
 
 .streamer-row input,
-.youtube-row input {
+.youtube-row input,
+.twitch-row input {
     flex: 1;
     padding: 8px 10px;
     background-color: #202225;
@@ -534,6 +649,25 @@ body {
     border-radius: 4px;
     color: #dcddde;
     font-size: 14px;
+}
+
+.twitch-username,
+.youtube-channel {
+    flex: 1;
+    padding: 8px 10px;
+    background-color: #202225;
+    border: 1px solid #202225;
+    border-radius: 4px;
+    color: #dcddde;
+    font-size: 14px;
+}
+
+#twitchContainer,
+#youtubeContainer {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-bottom: 16px;
 }
 
 /* Buttons */
@@ -581,6 +715,20 @@ body {
 
 .btn-danger:hover {
     background-color: #c03537;
+}
+
+.btn-small {
+    padding: 6px 12px;
+    font-size: 13px;
+}
+
+.btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.btn:disabled:hover {
+    background-color: inherit;
 }
 
 .action-buttons {
@@ -634,11 +782,287 @@ body {
     margin-bottom: 20px;
 }
 
+/* Calendar Management Styles */
+.calendar-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 16px;
+    background-color: #2f3136;
+    border-radius: 8px;
+    margin-bottom: 12px;
+    border: 1px solid #202225;
+    transition: all 0.2s;
+}
+
+.calendar-item:hover {
+    border-color: #404249;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+}
+
+.calendar-info {
+    flex: 1;
+}
+
+.calendar-info h3,
+.calendar-info h4 {
+    margin: 0 0 6px 0;
+    color: #ffffff;
+    font-size: 16px;
+}
+
+.calendar-id {
+    font-family: 'Courier New', Consolas, Monaco, monospace;
+    color: #72767d;
+    font-size: 13px;
+    margin: 4px 0;
+    word-break: break-all;
+}
+
+.calendar-description {
+    color: #96989d;
+    font-size: 13px;
+    margin: 6px 0 0 0;
+    font-style: italic;
+}
+
+.calendar-info small {
+    color: #72767d;
+    font-size: 12px;
+    display: block;
+    margin-top: 6px;
+}
+
+.calendar-actions {
+    display: flex;
+    gap: 8px;
+    flex-shrink: 0;
+}
+
+.available-calendar-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 16px;
+    background-color: #2f3136;
+    border: 1px solid #202225;
+    border-radius: 8px;
+    margin-bottom: 12px;
+    transition: all 0.2s;
+}
+
+.available-calendar-item:hover {
+    border-color: #5865F2;
+    box-shadow: 0 2px 8px rgba(88, 101, 242, 0.2);
+}
+
+.status-indicator {
+    padding: 16px;
+    border-radius: 8px;
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+}
+
+.status-indicator.success {
+    background-color: rgba(59, 165, 92, 0.15);
+    border: 1px solid rgba(59, 165, 92, 0.3);
+    color: #3ba55c;
+}
+
+.status-indicator.error {
+    background-color: rgba(237, 66, 69, 0.15);
+    border: 1px solid rgba(237, 66, 69, 0.3);
+    color: #ed4245;
+}
+
+.status-indicator strong {
+    display: block;
+    font-size: 16px;
+    margin-bottom: 4px;
+}
+
+.status-indicator p {
+    margin: 4px 0;
+    font-size: 14px;
+    opacity: 0.9;
+}
+
+.status-dot {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background-color: currentColor;
+    margin-top: 4px;
+    flex-shrink: 0;
+}
+
+.calendar-instructions {
+    line-height: 1.8;
+    color: #dcddde;
+}
+
+.calendar-instructions h4 {
+    color: #ffffff;
+    font-size: 16px;
+    margin-top: 24px;
+    margin-bottom: 12px;
+    padding-top: 16px;
+    border-top: 1px solid #202225;
+}
+
+.calendar-instructions h4:first-child {
+    margin-top: 0;
+    padding-top: 0;
+    border-top: none;
+}
+
+.calendar-instructions ol {
+    padding-left: 24px;
+    margin-bottom: 16px;
+}
+
+.calendar-instructions ol li {
+    margin-bottom: 8px;
+    color: #b9bbbe;
+}
+
+.calendar-instructions code {
+    background-color: #202225;
+    padding: 3px 8px;
+    border-radius: 4px;
+    font-family: 'Courier New', Consolas, Monaco, monospace;
+    font-size: 13px;
+    color: #ed4245;
+    border: 1px solid #18191c;
+}
+
+.calendar-instructions a {
+    color: #5865F2;
+    text-decoration: none;
+    font-weight: 500;
+}
+
+.calendar-instructions a:hover {
+    text-decoration: underline;
+}
+
+.instructions {
+    line-height: 1.8;
+    color: #dcddde;
+}
+
+.instructions h3 {
+    color: #ffffff;
+    font-size: 16px;
+    margin-top: 24px;
+    margin-bottom: 12px;
+}
+
+.instructions h3:first-child {
+    margin-top: 0;
+}
+
+.instructions ol {
+    padding-left: 24px;
+    margin-bottom: 16px;
+}
+
+.instructions ol li {
+    margin-bottom: 8px;
+    color: #b9bbbe;
+}
+
+.instructions code {
+    background-color: #202225;
+    padding: 3px 8px;
+    border-radius: 4px;
+    font-family: 'Courier New', Consolas, Monaco, monospace;
+    font-size: 13px;
+    color: #ed4245;
+}
+
+.instructions a {
+    color: #5865F2;
+    text-decoration: none;
+}
+
+.instructions a:hover {
+    text-decoration: underline;
+}
+
+.error-text {
+    color: #ed4245;
+    font-size: 14px;
+    margin-top: 8px;
+}
+
+/* Bot Status Grid */
+.bot-status-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 12px;
+    padding: 16px;
+    background-color: #202225;
+    border-radius: 6px;
+}
+
+.bot-status-grid > div {
+    padding: 8px;
+    color: #b9bbbe;
+    font-size: 14px;
+}
+
+.bot-status-grid strong {
+    color: #ffffff;
+    margin-right: 8px;
+}
+
+/* Command Items */
+.command-category {
+    margin-bottom: 24px;
+}
+
+.command-category h3 {
+    color: #ffffff;
+    font-size: 18px;
+    margin-bottom: 12px;
+    padding-bottom: 8px;
+    border-bottom: 2px solid #202225;
+}
+
+.command-item {
+    background-color: #2f3136;
+    padding: 12px 16px;
+    border-radius: 6px;
+    margin-bottom: 8px;
+    border: 1px solid #202225;
+}
+
+.command-item code {
+    color: #5865F2;
+    font-family: 'Courier New', monospace;
+    font-size: 14px;
+    font-weight: 600;
+}
+
+.command-item p {
+    color: #b9bbbe;
+    font-size: 14px;
+    margin-top: 4px;
+}
+
 /* Loading & Empty States */
 .loading {
     text-align: center;
     padding: 40px;
     color: #b9bbbe;
+    font-size: 15px;
+}
+
+.loading::before {
+    content: "⏳ ";
+    font-size: 20px;
 }
 
 .empty-state {
@@ -646,6 +1070,13 @@ body {
     padding: 60px 20px;
     color: #72767d;
     font-size: 16px;
+}
+
+.empty-state::before {
+    content: "📭";
+    display: block;
+    font-size: 48px;
+    margin-bottom: 16px;
 }
 
 .error {
@@ -657,6 +1088,10 @@ body {
 /* Utility Classes */
 .hidden {
     display: none !important;
+}
+
+.text-center {
+    text-align: center;
 }
 
 /* Scrollbar */
@@ -678,54 +1113,7 @@ body {
     background-color: #18191c;
 }
 
-/* Responsive */
-@media (max-width: 768px) {
-    .discord-container {
-        flex-direction: column;
-    }
-    
-    .server-list {
-        width: 100%;
-        height: 60px;
-        flex-direction: row;
-        padding: 0 12px;
-    }
-    
-    .channel-list {
-        width: 100%;
-        max-height: 200px;
-        overflow-y: auto;
-    }
-    
-    .events-grid,
-    .presets-grid {
-        grid-template-columns: 1fr;
-    }
-    
-    .stats-grid {
-        grid-template-columns: repeat(2, 1fr);
-    }
-    
-    .role-row {
-        grid-template-columns: 60px 1fr 100px 40px;
-    }
-}
-
-@media (max-width: 480px) {
-    .role-row {
-        grid-template-columns: 1fr;
-    }
-    
-    .role-row button {
-        width: 100%;
-    }
-    
-    .stats-grid {
-        grid-template-columns: 1fr;
-    }
-}/* LOGIN POPUP STYLES - Add these to the end of your public/style.css file */
-
-/* Login Popup */
+/* ==================== LOGIN POPUP ==================== */
 .login-popup {
     position: fixed;
     top: 0;
@@ -807,27 +1195,84 @@ body {
     font-size: 13px;
 }
 
-/* Update auth status to show logout button */
-.status {
-    display: flex;
-    align-items: center;
-    padding: 6px 12px;
-    border-radius: 4px;
-    font-size: 13px;
-    font-weight: 500;
+/* ==================== RESPONSIVE ==================== */
+@media (max-width: 768px) {
+    .discord-container {
+        flex-direction: column;
+    }
+    
+    .server-list {
+        width: 100%;
+        height: 60px;
+        flex-direction: row;
+        padding: 0 12px;
+    }
+    
+    .channel-list {
+        width: 100%;
+        max-height: 200px;
+        overflow-y: auto;
+    }
+    
+    .events-grid,
+    .presets-grid {
+        grid-template-columns: 1fr;
+    }
+    
+    .stats-grid {
+        grid-template-columns: repeat(2, 1fr);
+    }
+    
+    .role-row {
+        grid-template-columns: 60px 1fr 100px 40px;
+    }
+
+    .calendar-item,
+    .available-calendar-item {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+
+    .calendar-actions {
+        width: 100%;
+        margin-top: 12px;
+        justify-content: flex-end;
+    }
+
+    .bot-status-grid {
+        grid-template-columns: 1fr;
+    }
 }
 
-.status button {
-    margin-left: 10px;
-}
-
-/* Hide API key section when using login system */
-.api-key-section {
-    display: none !important;
-}
-
-/* Responsive login popup */
 @media (max-width: 480px) {
+    .role-row {
+        grid-template-columns: 1fr;
+    }
+    
+    .role-row button {
+        width: 100%;
+    }
+    
+    .stats-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .calendar-actions {
+        flex-direction: column;
+    }
+
+    .calendar-actions .btn {
+        width: 100%;
+    }
+
+    .action-buttons {
+        flex-direction: column;
+    }
+
+    .action-buttons .btn {
+        width: 100%;
+    }
+
     .login-popup-content {
         width: 95%;
         padding: 24px;
@@ -841,101 +1286,23 @@ body {
         flex-direction: column;
     }
 }
-/* Calendar Management Styles */
-.calendar-item {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 15px;
-    background: #f8f9fa;
-    border-radius: 8px;
-    margin-bottom: 10px;
+
+/* ==================== ANIMATIONS ==================== */
+@keyframes fadeIn {
+    from {
+        opacity: 0;
+        transform: translateY(-10px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
 }
 
-.calendar-info h3 {
-    margin: 0 0 5px 0;
-    color: #2c3e50;
-}
-
-.calendar-id {
-    font-family: 'Courier New', monospace;
-    color: #7f8c8d;
-    font-size: 0.9em;
-}
-
-.calendar-description {
-    color: #95a5a6;
-    font-size: 0.9em;
-    margin: 5px 0 0 0;
-}
-
-.calendar-actions {
-    display: flex;
-    gap: 10px;
-}
-
-.available-calendar-item {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 15px;
-    background: #fff;
-    border: 1px solid #e1e4e8;
-    border-radius: 8px;
-    margin-bottom: 10px;
-}
-
-.status-indicator {
-    padding: 15px;
-    border-radius: 8px;
-    display: flex;
-    align-items: flex-start;
-    gap: 10px;
-}
-
-.status-indicator.success {
-    background: #d4edda;
-    border: 1px solid #c3e6cb;
-    color: #155724;
-}
-
-.status-indicator.error {
-    background: #f8d7da;
-    border: 1px solid #f5c6cb;
-    color: #721c24;
-}
-
-.status-dot {
-    width: 12px;
-    height: 12px;
-    border-radius: 50%;
-    background: currentColor;
-    margin-top: 5px;
-    flex-shrink: 0;
-}
-
-.instructions {
-    line-height: 1.6;
-}
-
-.instructions h3 {
-    color: #2c3e50;
-    margin-top: 20px;
-}
-
-.instructions ol {
-    padding-left: 20px;
-}
-
-.instructions code {
-    background: #f4f4f4;
-    padding: 2px 6px;
-    border-radius: 3px;
-    font-family: 'Courier New', monospace;
-    font-size: 0.9em;
-}
-
-.error-text {
-    color: #e74c3c;
-    font-size: 0.9em;
+.event-card,
+.preset-card,
+.calendar-item,
+.available-calendar-item,
+.config-card {
+    animation: fadeIn 0.3s ease-out;
 }
