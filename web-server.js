@@ -214,23 +214,47 @@ app.delete('/api/presets/:presetKey', verifySession, async (req, res) => {
 
 // ==================== GOOGLE CALENDAR ====================
 
+// ✅ FIXED: This endpoint now checks the database instead of environment variables
 app.get('/api/calendars/status', verifySession, async (req, res) => {
   try {
-    const isConfigured = calendarService.isEnabled();
-    const calendars = calendarService.getCalendars();
-    const hasIcalCalendars = calendars.some(cal => 
-      cal.id.startsWith('http://') || cal.id.startsWith('https://')
+    const { CalendarConfig } = require('./src/models');
+    const configs = await CalendarConfig.findAll();
+    
+    const hasIcalCalendars = configs.some(cal => 
+      cal.calendarId.startsWith('http://') || cal.calendarId.startsWith('https://')
     );
     
+    const hasGoogleCalendars = configs.some(cal => 
+      !cal.calendarId.startsWith('http://') && !cal.calendarId.startsWith('https://')
+    );
+    
+    // Check if Google Calendar API credentials file exists (for write operations)
+    let apiConfigured = false;
+    try {
+      const credentialsPath = process.env.GOOGLE_CALENDAR_CREDENTIALS || 
+                             process.env.GOOGLE_CREDENTIALS ||
+                             path.join(__dirname, 'data', 'calendar-credentials.json');
+      apiConfigured = fs.existsSync(credentialsPath);
+    } catch (error) {
+      apiConfigured = false;
+    }
+    
     res.json({ 
-      configured: isConfigured,
+      configured: apiConfigured || configs.length > 0,
       hasIcalCalendars,
+      hasGoogleCalendars,
+      apiConfigured,
+      totalCalendars: configs.length,
       supportsIcal: true
     });
   } catch (error) {
+    console.error('Error checking calendar status:', error);
     res.json({ 
       configured: false, 
       hasIcalCalendars: false,
+      hasGoogleCalendars: false,
+      apiConfigured: false,
+      totalCalendars: 0,
       supportsIcal: true,
       error: error.message 
     });
@@ -251,6 +275,78 @@ app.get('/api/calendars', verifySession, async (req, res) => {
   } catch (error) {
     console.error('Error loading calendars:', error);
     res.status(500).json({ error: error.message });
+  }
+});
+
+app.get('/api/calendars/available', verifySession, async (req, res) => {
+  try {
+    // Use the calendar service's authenticated client
+    const { google } = require('googleapis');
+    const path = require('path');
+    
+    // Read credentials from the configured path
+    const credentialsPath = process.env.GOOGLE_CALENDAR_CREDENTIALS || 
+                           process.env.GOOGLE_CREDENTIALS ||
+                           path.join(__dirname, 'data', 'calendar-credentials.json');
+    
+    const fs = require('fs');
+    if (!fs.existsSync(credentialsPath)) {
+      return res.status(400).json({ 
+        error: 'Calendar credentials file not found at: ' + credentialsPath + '. Please add your calendar-credentials.json file to the data folder.' 
+      });
+    }
+
+    const credentialsContent = fs.readFileSync(credentialsPath, 'utf8');
+    const credentials = JSON.parse(credentialsContent);
+    
+    const auth = new google.auth.GoogleAuth({
+      credentials,
+      scopes: [
+        'https://www.googleapis.com/auth/calendar',
+        'https://www.googleapis.com/auth/calendar.readonly'
+      ]
+    });
+
+    const authClient = await auth.getClient();
+    const calendar = google.calendar({ version: 'v3', auth: authClient });
+    
+    const response = await calendar.calendarList.list({
+      maxResults: 50,
+      showHidden: false
+    });
+    
+    if (!response.data.items || response.data.items.length === 0) {
+      return res.json([]);
+    }
+
+    const calendars = response.data.items.map(cal => ({
+      id: cal.id,
+      summary: cal.summary,
+      description: cal.description || '',
+      primary: cal.primary || false,
+      accessRole: cal.accessRole,
+      backgroundColor: cal.backgroundColor
+    }));
+
+    console.log(`[Calendar API] Found ${calendars.length} available calendars`);
+    res.json(calendars);
+    
+  } catch (error) {
+    console.error('Error fetching available calendars:', error);
+    
+    // Provide more detailed error messages
+    let errorMessage = error.message;
+    if (error.code === 401 || error.code === 403) {
+      errorMessage = 'Authentication failed. Please check that:\n' +
+                    '1. Your service account credentials are valid\n' +
+                    '2. The Calendar API is enabled in Google Cloud Console\n' +
+                    '3. The service account has calendar access';
+    }
+    
+    res.status(error.code || 500).json({ 
+      error: errorMessage,
+      details: error.errors || []
+    });
   }
 });
 
