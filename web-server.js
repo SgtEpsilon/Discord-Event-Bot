@@ -27,6 +27,9 @@ const calendarService = new CalendarService(
 // Session storage (in production, use Redis or database)
 const sessions = new Map();
 
+// Make sessions available to routes
+app.locals.sessions = sessions;
+
 // Authentication middleware
 function verifySession(req, res, next) {
   const token = req.headers['x-auth-token'];

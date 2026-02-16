@@ -1,12 +1,25 @@
-// OAuth Routes - Add these to web-server.js after the existing calendar routes
-
-const GoogleOAuthService = require('./src/services/googleOAuth');
+// oauth-routes.js - Google OAuth Routes
+const express = require('express');
+const router = express.Router();
+const GoogleOAuthService = require('./googleOAuth');
 const googleOAuth = new GoogleOAuthService();
+
+// Helper function to verify session
+function verifySession(req, res, next) {
+  const token = req.headers['x-auth-token'];
+  const sessions = req.app.locals.sessions;
+  
+  if (!token || !sessions.has(token)) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+  
+  next();
+}
 
 // ==================== GOOGLE OAUTH ROUTES ====================
 
 // Check if OAuth is configured
-app.get('/api/oauth/google/status', verifySession, (req, res) => {
+router.get('/oauth/google/status', (req, res) => {
   res.json({
     configured: googleOAuth.isConfigured(),
     redirectUri: process.env.GOOGLE_OAUTH_REDIRECT_URI || 'http://localhost:3000/api/auth/google/callback'
@@ -14,9 +27,10 @@ app.get('/api/oauth/google/status', verifySession, (req, res) => {
 });
 
 // Get current user's OAuth status
-app.get('/api/oauth/google/user-status', verifySession, async (req, res) => {
+router.get('/oauth/google/user-status', verifySession, async (req, res) => {
   try {
     const token = req.headers['x-auth-token'];
+    const sessions = req.app.locals.sessions;
     const session = sessions.get(token);
     
     if (!session) {
@@ -38,9 +52,12 @@ app.get('/api/oauth/google/user-status', verifySession, async (req, res) => {
 
     res.json({
       authenticated: true,
-      email: userOAuth.email,
-      name: userOAuth.name,
-      picture: userOAuth.picture,
+      user: {
+        email: userOAuth.email,
+        name: userOAuth.name,
+        picture: userOAuth.picture,
+        tokenExpiry: userOAuth.tokenExpiry
+      },
       tokenExpired: isExpired
     });
   } catch (error) {
@@ -50,7 +67,7 @@ app.get('/api/oauth/google/user-status', verifySession, async (req, res) => {
 });
 
 // Start OAuth flow
-app.get('/api/oauth/google/login', verifySession, (req, res) => {
+router.get('/oauth/google/login', verifySession, (req, res) => {
   try {
     if (!googleOAuth.isConfigured()) {
       return res.status(400).json({ 
@@ -59,7 +76,7 @@ app.get('/api/oauth/google/login', verifySession, (req, res) => {
     }
 
     const token = req.headers['x-auth-token'];
-    const authUrl = googleOAuth.getAuthUrl(token); // Pass session token as state
+    const authUrl = googleOAuth.getAuthUrl(token);
     
     res.json({ authUrl });
   } catch (error) {
@@ -69,7 +86,7 @@ app.get('/api/oauth/google/login', verifySession, (req, res) => {
 });
 
 // OAuth callback
-app.get('/api/auth/google/callback', async (req, res) => {
+router.get('/auth/google/callback', async (req, res) => {
   try {
     const { code, state } = req.query;
 
@@ -85,6 +102,7 @@ app.get('/api/auth/google/callback', async (req, res) => {
 
     // Verify session from state parameter
     const sessionToken = state;
+    const sessions = req.app.locals.sessions;
     const session = sessions.get(sessionToken);
 
     if (!session) {
@@ -116,9 +134,10 @@ app.get('/api/auth/google/callback', async (req, res) => {
 });
 
 // Logout from Google (revoke tokens)
-app.post('/api/oauth/google/logout', verifySession, async (req, res) => {
+router.post('/oauth/google/logout', verifySession, async (req, res) => {
   try {
     const token = req.headers['x-auth-token'];
+    const sessions = req.app.locals.sessions;
     const session = sessions.get(token);
 
     if (!session) {
@@ -151,9 +170,10 @@ app.post('/api/oauth/google/logout', verifySession, async (req, res) => {
 });
 
 // Get user's calendars via OAuth
-app.get('/api/oauth/google/calendars', verifySession, async (req, res) => {
+router.get('/oauth/google/calendars', verifySession, async (req, res) => {
   try {
     const token = req.headers['x-auth-token'];
+    const sessions = req.app.locals.sessions;
     const session = sessions.get(token);
 
     if (!session) {
@@ -197,17 +217,22 @@ app.get('/api/oauth/google/calendars', verifySession, async (req, res) => {
 
     const calendars = await googleOAuth.listCalendars(tokens);
 
-    res.json(calendars.map(cal => ({
-      id: cal.id,
-      summary: cal.summary,
-      description: cal.description || '',
-      primary: cal.primary || false,
-      accessRole: cal.accessRole,
-      backgroundColor: cal.backgroundColor,
-      foregroundColor: cal.foregroundColor
-    })));
+    res.json({
+      success: true,
+      calendars: calendars.map(cal => ({
+        id: cal.id,
+        summary: cal.summary,
+        description: cal.description || '',
+        primary: cal.primary || false,
+        accessRole: cal.accessRole,
+        backgroundColor: cal.backgroundColor,
+        foregroundColor: cal.foregroundColor
+      }))
+    });
   } catch (error) {
     console.error('Error fetching OAuth calendars:', error);
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ success: false, error: error.message });
   }
 });
+
+module.exports = router;
