@@ -1,24 +1,29 @@
 {
-  "uptime": 702.182418,
-  "uptimeFormatted": "11m",
+  "uptime": 36.1264821,
+  "uptimeFormatted": "0m",
   "memory": {
-    "rss": 139399168,
-    "heapTotal": 78991360,
-    "heapUsed": 75533936,
-    "external": 3960475,
-    "arrayBuffers": 77744
+    "rss": 138723328,
+    "heapTotal": 79777792,
+    "heapUsed": 75273408,
+    "external": 3992590,
+    "arrayBuffers": 109859
   },
   "nodeVersion": "v24.13.0",
-  "pid": 3168,
+  "pid": 56392,
   "botName": "Testbot#9379",
   "guildCount": 1,
-  "timestamp": "2026-02-16T02:25:46.238Z",
+  "timestamp": "2026-02-16T08:24:46.489Z",
   "status": "online",
   "autoSync": {
-    "enabled": true,
+    "enabled": false,
     "interval": 300000,
     "intervalFormatted": "5 minutes",
-    "channelId": "1469502056435024003",
-    "guildId": "1460761916619227361"
+    "channelId": null,
+    "guildId": null
+  },
+  "backgroundSync": {
+    "enabled": true,
+    "interval": 300000,
+    "intervalFormatted": "5 minutes"
   }
 }

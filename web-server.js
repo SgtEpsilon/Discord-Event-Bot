@@ -380,64 +380,137 @@ app.put('/api/calendars/:id', verifySession, async (req, res) => {
 
 app.delete('/api/calendars/:id', verifySession, async (req, res) => {
   try {
-    const { id } = req.params;
+    console.log(`[Calendar] Delete request for ID: ${req.params.id}`);
+    
     const { CalendarConfig } = require('./src/models');
-    await CalendarConfig.destroy({ where: { id } });
-    res.json({ success: true });
+    
+    // Parse ID (handles both string and integer IDs)
+    const calendarId = isNaN(req.params.id) ? req.params.id : parseInt(req.params.id);
+    
+    // Find calendar first
+    const calendar = await CalendarConfig.findOne({
+      where: { id: calendarId }
+    });
+    
+    if (!calendar) {
+      console.log(`[Calendar] Calendar not found with ID: ${calendarId}`);
+      return res.status(404).json({ 
+        success: false, 
+        error: `Calendar not found (ID: ${calendarId})` 
+      });
+    }
+    
+    const calendarName = calendar.name;
+    const calendarIdValue = calendar.calendarId;
+    
+    // Delete the calendar
+    await calendar.destroy();
+    
+    console.log(`[Calendar] ✅ Deleted calendar: ${calendarName}`);
+    console.log(`[Calendar]    Calendar ID: ${calendarIdValue}`);
+    console.log(`[Calendar]    Database ID: ${calendarId}`);
+    
+    res.json({ 
+      success: true, 
+      message: `Calendar "${calendarName}" deleted successfully` 
+    });
+    
   } catch (error) {
-    console.error('Error deleting calendar:', error);
-    res.status(500).json({ success: false, error: error.message });
+    console.error('[Calendar] ❌ Delete error:', error);
+    console.error('[Calendar] Error stack:', error.stack);
+    
+    res.status(500).json({ 
+      success: false, 
+      error: `Failed to delete calendar: ${error.message}` 
+    });
   }
 });
 
 app.post('/api/calendars/manual-sync', verifySession, async (req, res) => {
   try {
-    const result = await calendarService.syncEvents(168);
+    // Load calendars from database instead of config
+    const { CalendarConfig } = require('./src/models');
+    const dbCalendars = await CalendarConfig.findAll();
+    
+    if (dbCalendars.length === 0) {
+      return res.json({ 
+        success: false, 
+        error: 'No calendars configured. Please add calendars in the Google Calendar tab first.' 
+      });
+    }
+    
+    // Build calendar array in the format CalendarService expects
+    const calendars = dbCalendars.map(cal => ({
+      name: cal.name,
+      id: cal.calendarId
+    }));
+    
+    console.log(`[Manual Sync] Syncing from ${calendars.length} calendar(s):`, calendars.map(c => c.name).join(', '));
+    
+    // Create a temporary calendar service with database calendars
+    const CalendarService = require('./src/services/calendar');
+    const tempCalendarService = new CalendarService(
+      config.google.credentials,
+      calendars
+    );
+    
+    // Sync events
+    const result = await tempCalendarService.syncEvents(168); // Next 7 days
     
     if (!result.success) {
       return res.json({ success: false, error: result.message });
     }
     
     let importedCount = 0;
+    const { Event } = require('./src/models');
+    
     for (const eventData of result.events) {
       try {
-        const eventId = `gcal_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-        
-        const existingEvents = await eventManager.getAllEvents();
-        const exists = Object.values(existingEvents).find(e => 
-          e.calendarSourceId === eventData.calendarSourceId
-        );
+        // Check if event already exists by calendarSourceId
+        const exists = await Event.findOne({
+          where: { calendarSourceId: eventData.calendarSourceId }
+        });
         
         if (!exists) {
-          await eventManager.createEvent({
+          const eventId = `gcal_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+          
+          await Event.create({
             id: eventId,
             title: eventData.calendarEvent.summary || 'Untitled Event',
             description: eventData.calendarEvent.description || '',
-            dateTime: eventData.calendarEvent.start.dateTime,
+            dateTime: new Date(eventData.calendarEvent.start.dateTime),
             duration: eventData.duration,
             maxParticipants: 0,
             roles: [],
-            createdBy: 'calendar_sync',
+            signups: {},
+            createdBy: 'manual_calendar_sync',
+            channelId: null,
+            guildId: null,
+            messageId: null,
             calendarLink: eventData.calendarEvent.htmlLink,
             calendarEventId: eventData.calendarEvent.id,
             calendarSource: eventData.calendarSource,
             calendarSourceId: eventData.calendarSourceId
           });
+          
           importedCount++;
         }
       } catch (error) {
-        console.error('Error importing event:', error);
+        console.error('[Manual Sync] Error importing event:', error.message);
       }
     }
     
+    console.log(`[Manual Sync] Complete - Imported: ${importedCount}, Total: ${result.events.length}`);
+    
     res.json({
       success: true,
-      message: result.message,
+      message: `Synced from ${calendars.map(c => c.name).join(', ')}`,
       imported: importedCount,
-      total: result.events.length
+      total: result.events.length,
+      calendars: calendars.map(c => c.name)
     });
   } catch (error) {
-    console.error('Error during manual sync:', error);
+    console.error('[Manual Sync] Error during sync:', error);
     res.status(500).json({ success: false, error: error.message });
   }
 });
