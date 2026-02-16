@@ -1,4 +1,10 @@
-// src/services/webEventPoster.js
+// ============================================================================
+// FILE: src/services/webEventPoster.js
+// INSTRUCTIONS: Replace the ENTIRE contents of this file with the code below
+// ============================================================================
+// src/services/webEventPoster.js - COMPLETE REPLACEMENT
+// Posts ALL events (web, calendar, Discord) to the configured event channel
+
 const EmbedBuilder = require('../discord/embedBuilder');
 const ButtonBuilder = require('../discord/buttonBuilder');
 
@@ -8,10 +14,12 @@ class WebEventPoster {
     this.eventManager = eventManager;
     this.checkInterval = null;
     this.isChecking = false;
+    this.processedEventIds = new Set(); // Track events we've already processed
   }
 
   /**
-   * Check for events created in web UI that need posting to Discord
+   * Check for events that need posting to Discord
+   * Handles events from: Web UI, Calendar imports, and Discord commands
    */
   async checkAndPostEvents() {
     if (this.isChecking) {
@@ -22,13 +30,20 @@ class WebEventPoster {
     this.isChecking = true;
 
     try {
-      const allEvents = this.eventManager.getAllEvents();
-      const eventsToPost = Object.values(allEvents).filter(event => 
-        event.channelId &&        // Has a target channel
-        event.guildId &&          // Has a target guild
-        !event.messageId &&       // Not yet posted
-        event.createdBy === 'web_interface' // Created from web
-      );
+      const { Event, EventsConfig } = require('../models');
+      const { Op } = require('sequelize');
+      
+      // Find all events that:
+      // 1. Have NOT been posted yet (messageId is null)
+      // 2. Have a guildId (are associated with a Discord server)
+      // 3. Are upcoming (not in the past)
+      const eventsToPost = await Event.findAll({
+        where: {
+          messageId: null,
+          guildId: { [Op.not]: null },
+          dateTime: { [Op.gte]: new Date() }
+        }
+      });
 
       if (eventsToPost.length === 0) {
         return;
@@ -38,6 +53,13 @@ class WebEventPoster {
 
       for (const event of eventsToPost) {
         try {
+          // Skip if we've already tried to process this event in this session
+          if (this.processedEventIds.has(event.id)) {
+            continue;
+          }
+          
+          this.processedEventIds.add(event.id);
+          
           await this.postEventToDiscord(event);
         } catch (error) {
           console.error(`[WebEventPoster] Failed to post event ${event.id}:`, error.message);
@@ -51,14 +73,37 @@ class WebEventPoster {
   }
 
   /**
-   * Post a single event to Discord
+   * Post a single event to Discord in the configured event channel
    */
   async postEventToDiscord(event) {
     try {
+      const { EventsConfig } = require('../models');
+      
+      // Get the configured event channel for this guild
+      const guildConfig = await EventsConfig.findByPk(event.guildId);
+      
+      // Determine target channel:
+      // 1. Use configured event channel if available
+      // 2. Fall back to event.channelId if set
+      // 3. Skip if neither is available
+      let targetChannelId = null;
+      
+      if (guildConfig && guildConfig.eventChannelId) {
+        targetChannelId = guildConfig.eventChannelId;
+        console.log(`[WebEventPoster] Using configured event channel: ${targetChannelId}`);
+      } else if (event.channelId) {
+        targetChannelId = event.channelId;
+        console.log(`[WebEventPoster] Using event's channel: ${targetChannelId}`);
+      } else {
+        console.log(`[WebEventPoster] ⚠️  No channel configured for guild ${event.guildId}, skipping event ${event.id}`);
+        return;
+      }
+
       // Fetch the channel
-      const channel = await this.client.channels.fetch(event.channelId);
+      const channel = await this.client.channels.fetch(targetChannelId).catch(() => null);
+      
       if (!channel) {
-        console.error(`[WebEventPoster] Channel ${event.channelId} not found for event ${event.id}`);
+        console.error(`[WebEventPoster] Channel ${targetChannelId} not found or inaccessible for event ${event.id}`);
         return;
       }
 
@@ -69,8 +114,9 @@ class WebEventPoster {
       }
 
       // Create embed and buttons
-      const embed = EmbedBuilder.createEventEmbed(event);
-      const buttons = ButtonBuilder.createSignupButtons(event);
+      const eventJson = event.toJSON();
+      const embed = EmbedBuilder.createEventEmbed(eventJson);
+      const buttons = ButtonBuilder.createSignupButtons(eventJson);
 
       // Post to Discord
       const message = await channel.send({
@@ -78,10 +124,17 @@ class WebEventPoster {
         components: buttons || []
       });
 
-      // Update event with message ID
-      this.eventManager.updateEvent(event.id, { messageId: message.id });
+      // Update event with message ID and channel ID
+      await event.update({ 
+        messageId: message.id,
+        channelId: targetChannelId // Ensure channelId is set
+      });
 
-      console.log(`[WebEventPoster] ✅ Posted event "${event.title}" to ${channel.name} (${channel.guild.name})`);
+      const sourceType = event.createdBy === 'web_interface' ? 'Web UI' 
+                       : event.calendarSource ? `Calendar (${event.calendarSource})`
+                       : 'Discord';
+      
+      console.log(`[WebEventPoster] ✅ Posted ${sourceType} event "${event.title}" to ${channel.name} (${channel.guild.name})`);
     } catch (error) {
       console.error(`[WebEventPoster] Error posting event ${event.id}:`, error.message);
       throw error;
@@ -89,10 +142,20 @@ class WebEventPoster {
   }
 
   /**
-   * Start monitoring for new web events
+   * Clean up old processed event IDs to prevent memory leak
+   */
+  cleanupProcessedIds() {
+    if (this.processedEventIds.size > 1000) {
+      console.log('[WebEventPoster] Clearing processed event IDs cache');
+      this.processedEventIds.clear();
+    }
+  }
+
+  /**
+   * Start monitoring for new events
    */
   start() {
-    console.log('[WebEventPoster] Starting web event poster (checking every 10 seconds)');
+    console.log('[WebEventPoster] Starting event poster (checking every 10 seconds)');
     
     // Initial check after 5 seconds
     setTimeout(() => this.checkAndPostEvents(), 5000);
@@ -101,6 +164,11 @@ class WebEventPoster {
     this.checkInterval = setInterval(() => {
       this.checkAndPostEvents();
     }, 10000);
+    
+    // Clean up processed IDs every hour
+    setInterval(() => {
+      this.cleanupProcessedIds();
+    }, 3600000);
   }
 
   /**

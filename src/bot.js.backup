@@ -123,92 +123,41 @@ async function backgroundCalendarSync() {
 
     let importedCount = 0;
     let skippedCount = 0;
-    const { Event, EventsConfig } = require('./models');
-
-    // Get all guilds with event channels configured
-    const guildConfigs = await EventsConfig.findAll({
-      where: {
-        eventChannelId: { [require('sequelize').Op.not]: null }
-      }
-    });
-
-    console.log(`[BackgroundSync] Found ${guildConfigs.length} guild(s) with event channels configured`);
+    const { Event } = require('./models');
 
     for (const eventData of result.events) {
       try {
-        // Create one event per guild with event channel configured
-        if (guildConfigs.length > 0) {
-          for (const guildConfig of guildConfigs) {
-            // Make event ID unique per guild
-            const eventId = `gcal_${Date.now()}_${Math.random().toString(36).substr(2, 9)}_${guildConfig.guildId}`;
-            
-            // Make calendarSourceId unique per guild to prevent duplicates
-            const sourceIdForGuild = `${eventData.calendarSourceId}_${guildConfig.guildId}`;
-            
-            // Check if this event already exists for THIS guild
-            const exists = await Event.findOne({
-              where: { calendarSourceId: sourceIdForGuild }
-            });
+        // Check if event already exists by calendarSourceId
+        const exists = await Event.findOne({
+          where: { calendarSourceId: eventData.calendarSourceId }
+        });
 
-            if (!exists) {
-              await Event.create({
-                id: eventId,
-                title: eventData.calendarEvent.summary || 'Untitled Event',
-                description: eventData.calendarEvent.description || '',
-                dateTime: new Date(eventData.calendarEvent.start.dateTime),
-                duration: eventData.duration,
-                maxParticipants: 0,
-                roles: [],
-                signups: {},
-                createdBy: 'calendar_background_sync',
-                calendarLink: eventData.calendarEvent.htmlLink,
-                calendarEventId: eventData.calendarEvent.id,
-                calendarSource: eventData.calendarSource,
-                calendarSourceId: sourceIdForGuild,
-                // Set channelId and guildId so webEventPoster can post it
-                channelId: guildConfig.eventChannelId,
-                guildId: guildConfig.guildId,
-                messageId: null // Will be set by webEventPoster
-              });
-              
-              importedCount++;
-              console.log(`[BackgroundSync] Created event "${eventData.calendarEvent.summary}" for guild ${guildConfig.guildId}`);
-            } else {
-              skippedCount++;
-            }
-          }
-        } else {
-          // No guilds configured - create a guild-less event (web UI only)
+        if (!exists) {
           const eventId = `gcal_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
           
-          const exists = await Event.findOne({
-            where: { calendarSourceId: eventData.calendarSourceId }
+          await Event.create({
+            id: eventId,
+            title: eventData.calendarEvent.summary || 'Untitled Event',
+            description: eventData.calendarEvent.description || '',
+            dateTime: new Date(eventData.calendarEvent.start.dateTime),
+            duration: eventData.duration,
+            maxParticipants: 0,
+            roles: [],
+            signups: {},
+            createdBy: 'calendar_background_sync',
+            calendarLink: eventData.calendarEvent.htmlLink,
+            calendarEventId: eventData.calendarEvent.id,
+            calendarSource: eventData.calendarSource,
+            calendarSourceId: eventData.calendarSourceId,
+            // No channelId or guildId - these are web-only events
+            channelId: null,
+            guildId: null,
+            messageId: null
           });
-
-          if (!exists) {
-            await Event.create({
-              id: eventId,
-              title: eventData.calendarEvent.summary || 'Untitled Event',
-              description: eventData.calendarEvent.description || '',
-              dateTime: new Date(eventData.calendarEvent.start.dateTime),
-              duration: eventData.duration,
-              maxParticipants: 0,
-              roles: [],
-              signups: {},
-              createdBy: 'calendar_background_sync',
-              calendarLink: eventData.calendarEvent.htmlLink,
-              calendarEventId: eventData.calendarEvent.id,
-              calendarSource: eventData.calendarSource,
-              calendarSourceId: eventData.calendarSourceId,
-              channelId: null,
-              guildId: null,
-              messageId: null
-            });
-            
-            importedCount++;
-          } else {
-            skippedCount++;
-          }
+          
+          importedCount++;
+        } else {
+          skippedCount++;
         }
       } catch (error) {
         console.error(`[BackgroundSync] Error importing event:`, error.message);
@@ -222,7 +171,7 @@ async function backgroundCalendarSync() {
       const { AutoSyncConfig } = require('./models');
       await AutoSyncConfig.upsert({
         id: 1,
-        enabled: false,
+        enabled: false, // This is for background sync tracking only
         lastSync: new Date()
       });
     } catch (error) {
@@ -383,15 +332,9 @@ async function syncFromCalendar(channelId, guildId, calendarFilter = null) {
     
     for (const eventData of result.events) {
       try {
-        // Make calendarSourceId unique per guild
-        const sourceIdForGuild = `${eventData.calendarSourceId}_${guildId}`;
-        
-        // Check if event exists for THIS guild specifically
+        // Check if already exists
         const exists = await Event.findOne({
-          where: { 
-            calendarSourceId: sourceIdForGuild,
-            guildId: guildId
-          }
+          where: { calendarSourceId: eventData.calendarSourceId }
         });
         
         if (exists && exists.messageId && exists.channelId === channelId) {
@@ -399,8 +342,7 @@ async function syncFromCalendar(channelId, guildId, calendarFilter = null) {
           continue;
         }
         
-        // Make event ID unique per guild
-        const eventId = exists?.id || `gcal_${Date.now()}_${Math.random().toString(36).substr(2, 9)}_${guildId}`;
+        const eventId = exists?.id || `gcal_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
         
         // Create or update event
         const [event] = await Event.upsert({
@@ -416,7 +358,7 @@ async function syncFromCalendar(channelId, guildId, calendarFilter = null) {
           calendarLink: eventData.calendarEvent.htmlLink,
           calendarEventId: eventData.calendarEvent.id,
           calendarSource: eventData.calendarSource,
-          calendarSourceId: sourceIdForGuild,
+          calendarSourceId: eventData.calendarSourceId,
           channelId: channelId,
           guildId: guildId,
           messageId: null // Will be set after posting
