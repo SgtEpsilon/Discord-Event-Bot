@@ -1,25 +1,25 @@
 // ============================================================================
 // FILE: src/services/webEventPoster.js
-// INSTRUCTIONS: Replace the ENTIRE contents of this file with the code below
+// UPDATED VERSION - Replace entire file with this
+// Now includes event tracking and restart protection
 // ============================================================================
-// src/services/webEventPoster.js - COMPLETE REPLACEMENT
-// Posts ALL events (web, calendar, Discord) to the configured event channel
 
 const EmbedBuilder = require('../discord/embedBuilder');
 const ButtonBuilder = require('../discord/buttonBuilder');
 
 class WebEventPoster {
-  constructor(client, eventManager) {
+  constructor(client, eventManager, eventTracker) {
     this.client = client;
     this.eventManager = eventManager;
+    this.eventTracker = eventTracker; // NEW: Event tracker for duplicate prevention
     this.checkInterval = null;
     this.isChecking = false;
-    this.processedEventIds = new Set(); // Track events we've already processed
   }
 
   /**
    * Check for events that need posting to Discord
    * Handles events from: Web UI, Calendar imports, and Discord commands
+   * NOW WITH: Duplicate prevention and restart protection
    */
   async checkAndPostEvents() {
     if (this.isChecking) {
@@ -53,12 +53,18 @@ class WebEventPoster {
 
       for (const event of eventsToPost) {
         try {
-          // Skip if we've already tried to process this event in this session
-          if (this.processedEventIds.has(event.id)) {
+          // NEW: Check if we've already posted this event (restart protection)
+          if (this.eventTracker.hasBeenPosted(event.id)) {
+            const postInfo = this.eventTracker.getPostingInfo(event.id);
+            console.log(`[WebEventPoster] ⏭️  Event ${event.id} already posted (message ${postInfo.messageId}), updating database`);
+            
+            // Update database with tracked info
+            await event.update({
+              messageId: postInfo.messageId,
+              channelId: postInfo.channelId
+            });
             continue;
           }
-          
-          this.processedEventIds.add(event.id);
           
           await this.postEventToDiscord(event);
         } catch (error) {
@@ -127,8 +133,16 @@ class WebEventPoster {
       // Update event with message ID and channel ID
       await event.update({ 
         messageId: message.id,
-        channelId: targetChannelId // Ensure channelId is set
+        channelId: targetChannelId
       });
+
+      // NEW: Track this posting to prevent duplicates
+      await this.eventTracker.markAsPosted(
+        event.id,
+        message.id,
+        targetChannelId,
+        event.guildId
+      );
 
       const sourceType = event.createdBy === 'web_interface' ? 'Web UI' 
                        : event.calendarSource ? `Calendar (${event.calendarSource})`
@@ -142,33 +156,101 @@ class WebEventPoster {
   }
 
   /**
-   * Clean up old processed event IDs to prevent memory leak
+   * Verify posted events still exist (restart protection)
+   * Reconciles tracker with actual Discord messages
    */
-  cleanupProcessedIds() {
-    if (this.processedEventIds.size > 1000) {
-      console.log('[WebEventPoster] Clearing processed event IDs cache');
-      this.processedEventIds.clear();
+  async verifyPostedEvents() {
+    console.log('[WebEventPoster] 🔍 Verifying posted events...');
+    
+    try {
+      const { Event } = require('../models');
+      const { Op } = require('sequelize');
+      
+      // Get all events that claim to be posted
+      const postedEvents = await Event.findAll({
+        where: {
+          messageId: { [Op.not]: null },
+          dateTime: { [Op.gte]: new Date() } // Only check upcoming events
+        }
+      });
+
+      let verified = 0;
+      let missing = 0;
+
+      for (const event of postedEvents) {
+        try {
+          // Try to fetch the message
+          const channel = await this.client.channels.fetch(event.channelId).catch(() => null);
+          
+          if (!channel) {
+            console.log(`[WebEventPoster] ⚠️  Channel ${event.channelId} not found for event ${event.id}`);
+            missing++;
+            continue;
+          }
+
+          const message = await channel.messages.fetch(event.messageId).catch(() => null);
+          
+          if (message) {
+            // Message exists, track it
+            await this.eventTracker.markAsPosted(
+              event.id,
+              event.messageId,
+              event.channelId,
+              event.guildId
+            );
+            verified++;
+          } else {
+            // Message was deleted, clear messageId so it can be reposted
+            console.log(`[WebEventPoster] ⚠️  Message ${event.messageId} not found, will repost event ${event.id}`);
+            await event.update({ messageId: null });
+            await this.eventTracker.untrack(event.id);
+            missing++;
+          }
+        } catch (error) {
+          console.error(`[WebEventPoster] Error verifying event ${event.id}:`, error.message);
+        }
+      }
+
+      console.log(`[WebEventPoster] ✅ Verification complete: ${verified} verified, ${missing} missing/will repost`);
+    } catch (error) {
+      console.error('[WebEventPoster] Error during verification:', error);
     }
   }
 
   /**
    * Start monitoring for new events
    */
-  start() {
-    console.log('[WebEventPoster] Starting event poster (checking every 10 seconds)');
+  async start() {
+    console.log('[WebEventPoster] Starting event poster with restart protection...');
     
-    // Initial check after 5 seconds
-    setTimeout(() => this.checkAndPostEvents(), 5000);
+    // NEW: Wait for event tracker to load
+    if (!this.eventTracker.isLoaded) {
+      console.log('[WebEventPoster] Waiting for event tracker to load...');
+      await this.eventTracker.load();
+    }
+    
+    // NEW: Sync tracker with database (restart protection)
+    await this.eventTracker.syncWithDatabase();
+    
+    // NEW: Verify all posted events still exist
+    setTimeout(() => {
+      this.verifyPostedEvents();
+    }, 5000);
+    
+    // Initial check after 10 seconds
+    setTimeout(() => this.checkAndPostEvents(), 10000);
     
     // Check every 10 seconds
     this.checkInterval = setInterval(() => {
       this.checkAndPostEvents();
     }, 10000);
     
-    // Clean up processed IDs every hour
+    // Verify posted events every hour
     setInterval(() => {
-      this.cleanupProcessedIds();
-    }, 3600000);
+      this.verifyPostedEvents();
+    }, 60 * 60 * 1000);
+    
+    console.log('[WebEventPoster] ✅ Service started');
   }
 
   /**
@@ -180,6 +262,21 @@ class WebEventPoster {
       this.checkInterval = null;
       console.log('[WebEventPoster] Stopped');
     }
+  }
+
+  /**
+   * Get status information
+   */
+  getStatus() {
+    const trackerStats = this.eventTracker.getStats();
+    
+    return {
+      isRunning: !!this.checkInterval,
+      trackerLoaded: this.eventTracker.isLoaded,
+      trackedEvents: trackerStats.totalTracked,
+      oldestTracked: trackerStats.oldestPosted,
+      newestTracked: trackerStats.newestPosted
+    };
   }
 }
 

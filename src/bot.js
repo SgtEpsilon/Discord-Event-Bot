@@ -14,6 +14,10 @@ const PresetManager = require('./services/presetManager');
 const EventsConfig = require('./services/eventsConfig');
 const WebEventPoster = require('./services/webEventPoster');
 
+// NEW SERVICES - Event tracking and backups
+const EventTracker = require('./services/eventTracker');
+const BackupService = require('./services/backupService');
+
 // Streaming services
 const StreamingConfigManager = require('./services/streamingConfig');
 const TwitchMonitor = require('./services/twitchMonitor');
@@ -36,8 +40,12 @@ const eventsConfig = new EventsConfig(
   config.files.eventsConfig || path.join(__dirname, '../data/events-config.json')
 );
 
-// Initialize web event poster
-const webEventPoster = new WebEventPoster(null, eventManager);
+// Initialize new services
+const eventTracker = new EventTracker();
+const backupService = new BackupService();
+
+// Initialize web event poster with event tracker
+const webEventPoster = new WebEventPoster(null, eventManager, eventTracker);
 
 // Initialize streaming services
 const streamingConfigPath = path.resolve(__dirname, config.files.streaming || 'data/streaming.json');
@@ -751,6 +759,18 @@ client.once('clientReady', async () => {
   console.log(`║ 🌐 Web Event Poster: Starting...`);
   console.log('╚═══════════════════════════════════════════════════════╝\n');
   
+  // Initialize event tracker (load from file)
+  console.log('║ 📊 Event Tracker: Loading...');
+  await eventTracker.load();
+  const trackerStats = eventTracker.getStats();
+  console.log(`║ 📊 Event Tracker: ${trackerStats.totalTracked} events tracked`);
+  
+  // Start backup service
+  console.log('║ 💾 Backup Service: Starting...');
+  await backupService.start();
+  console.log('║ 💾 Backup Service: Scheduled for Sundays at 12:00 AM');
+  console.log('╚═══════════════════════════════════════════════════════╝\n');
+  
   config.discord.clientId = client.user.id;
   
   // Register commands
@@ -949,3 +969,32 @@ function formatUptime(seconds) {
   const mins = Math.floor((seconds % 3600) / 60);
   return `${days}d ${hours}h ${mins}m`.replace(/0[dh]\s*/g, '').trim() || '0m';
 }
+
+// Graceful shutdown handlers
+process.on('SIGINT', async () => {
+  console.log('\n[Shutdown] Saving event tracker...');
+  await eventTracker.save();
+  
+  console.log('[Shutdown] Stopping backup service...');
+  backupService.stop();
+  
+  console.log('[Shutdown] Stopping web event poster...');
+  webEventPoster.stop();
+  
+  console.log('[Shutdown] Goodbye! 👋');
+  process.exit(0);
+});
+
+process.on('SIGTERM', async () => {
+  console.log('\n[Shutdown] Saving event tracker...');
+  await eventTracker.save();
+  
+  console.log('[Shutdown] Stopping backup service...');
+  backupService.stop();
+  
+  console.log('[Shutdown] Stopping web event poster...');
+  webEventPoster.stop();
+  
+  console.log('[Shutdown] Goodbye! 👋');
+  process.exit(0);
+});

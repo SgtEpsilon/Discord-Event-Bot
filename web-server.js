@@ -813,6 +813,143 @@ app.get('/api/commands', verifySession, async (req, res) => {
   }
 });
 
+// ==================== BACKUP MANAGEMENT ====================
+
+// Get backup service status
+app.get('/api/backups/status', verifySession, async (req, res) => {
+  try {
+    const BackupService = require('./src/services/backupService');
+    const backupService = new BackupService();
+    
+    const status = backupService.getStatus();
+    const lastBackup = await backupService.getLastBackupTime();
+    
+    res.json({
+      ...status,
+      lastBackup: lastBackup?.toISOString() || null,
+      nextBackup: getNextSundayMidnight().toISOString()
+    });
+  } catch (error) {
+    console.error('Error getting backup status:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// List all backups
+app.get('/api/backups/list', verifySession, async (req, res) => {
+  try {
+    const BackupService = require('./src/services/backupService');
+    const backupService = new BackupService();
+    
+    const backups = await backupService.listBackups();
+    
+    res.json({
+      success: true,
+      backups: backups.map(b => ({
+        fileName: b.fileName,
+        size: b.size,
+        sizeMB: (b.size / 1024 / 1024).toFixed(2),
+        created: b.created,
+        age: getBackupAge(b.created)
+      }))
+    });
+  } catch (error) {
+    console.error('Error listing backups:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Trigger manual backup
+app.post('/api/backups/create', verifySession, async (req, res) => {
+  try {
+    const BackupService = require('./src/services/backupService');
+    const backupService = new BackupService();
+    
+    await backupService.performBackup();
+    
+    res.json({
+      success: true,
+      message: 'Backup created successfully'
+    });
+  } catch (error) {
+    console.error('Error creating backup:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Download a backup
+app.get('/api/backups/download/:filename', verifySession, async (req, res) => {
+  try {
+    const { filename } = req.params;
+    
+    // Validate filename (security)
+    if (!filename.startsWith('backup-') || !filename.endsWith('.sqlite')) {
+      return res.status(400).json({ error: 'Invalid backup filename' });
+    }
+    
+    const BackupService = require('./src/services/backupService');
+    const backupService = new BackupService();
+    const backupPath = path.join(backupService.backupDir, filename);
+    
+    // Check if file exists
+    await fs.promises.access(backupPath);
+    
+    res.download(backupPath, filename);
+  } catch (error) {
+    console.error('Error downloading backup:', error);
+    res.status(404).json({ error: 'Backup not found' });
+  }
+});
+
+// Get event tracker stats
+app.get('/api/tracker/stats', verifySession, async (req, res) => {
+  try {
+    const EventTracker = require('./src/services/eventTracker');
+    const eventTracker = new EventTracker();
+    
+    await eventTracker.load();
+    const stats = eventTracker.getStats();
+    
+    res.json({
+      success: true,
+      stats: {
+        totalTracked: stats.totalTracked,
+        oldestPosted: stats.oldestPosted?.toISOString() || null,
+        newestPosted: stats.newestPosted?.toISOString() || null
+      }
+    });
+  } catch (error) {
+    console.error('Error getting tracker stats:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Helper functions for backups
+function getNextSundayMidnight() {
+  const now = new Date();
+  const daysUntilSunday = (7 - now.getDay()) % 7 || 7;
+  const nextSunday = new Date(now);
+  nextSunday.setDate(now.getDate() + daysUntilSunday);
+  nextSunday.setHours(0, 0, 0, 0);
+  return nextSunday;
+}
+
+function getBackupAge(created) {
+  const now = new Date();
+  const createdDate = new Date(created);
+  const diffMs = now - createdDate;
+  const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+  const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
+  
+  if (diffDays > 0) {
+    return `${diffDays} day${diffDays !== 1 ? 's' : ''} ago`;
+  } else if (diffHours > 0) {
+    return `${diffHours} hour${diffHours !== 1 ? 's' : ''} ago`;
+  } else {
+    return 'Just now';
+  }
+}
+
 // ==================== SERVER STARTUP ====================
 
 app.listen(PORT, () => {
