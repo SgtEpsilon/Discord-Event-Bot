@@ -701,6 +701,17 @@ app.post('/api/bot/restart', verifySession, async (req, res) => {
   }
 });
 
+// ==================== OAUTH ROUTES ====================
+// Mount OAuth routes
+try {
+  const oauthRoutes = require('./oauth-routes');
+  app.use('/api', oauthRoutes);
+  console.log('✅ OAuth routes loaded successfully');
+} catch (error) {
+  console.warn('⚠️  OAuth routes not available:', error.message);
+  console.warn('   To enable OAuth, create oauth-routes.js file');
+}
+
 // ==================== COMMANDS ====================
 
 app.get('/api/commands', verifySession, async (req, res) => {

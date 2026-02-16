@@ -5,6 +5,7 @@ const EventsConfig = require('./EventsConfig');
 const StreamingConfig = require('./StreamingConfig');
 const CalendarConfig = require('./CalendarConfig');
 const AutoSyncConfig = require('./AutoSyncConfig');
+const UserOAuth = require('./UserOAuth');
 
 module.exports = {
   Event,
@@ -12,5 +13,6 @@ module.exports = {
   EventsConfig,
   StreamingConfig,
   CalendarConfig,
-  AutoSyncConfig
+  AutoSyncConfig,
+  UserOAuth
 };

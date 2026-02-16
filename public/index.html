@@ -265,6 +265,48 @@
                         </div>
                     </div>
 
+                    <!-- Google OAuth Login -->
+                    <div class="config-card" id="googleOAuthCard">
+                        <div class="config-header">
+                            <div class="config-title">🔐 Google Account</div>
+                        </div>
+                        <div id="googleOAuthStatus">
+                            <div class="loading">Checking Google OAuth status...</div>
+                        </div>
+                        <div id="googleOAuthContent" class="hidden">
+                            <!-- Not logged in state -->
+                            <div id="googleNotLoggedIn" class="hidden">
+                                <p>Connect your Google account to easily browse and add your calendars.</p>
+                                <button class="btn btn-primary" onclick="loginWithGoogle()">
+                                    <span style="font-size: 1.2em;">🔐</span> Login with Google
+                                </button>
+                            </div>
+                            
+                            <!-- Logged in state -->
+                            <div id="googleLoggedIn" class="hidden">
+                                <div style="display: flex; align-items: center; gap: 15px; margin-bottom: 15px;">
+                                    <img id="googleUserPicture" src="" alt="Profile" style="width: 48px; height: 48px; border-radius: 50%;">
+                                    <div>
+                                        <div><strong id="googleUserName"></strong></div>
+                                        <div style="color: #888; font-size: 0.9em;" id="googleUserEmail"></div>
+                                    </div>
+                                </div>
+                                <div class="action-buttons">
+                                    <button class="btn btn-secondary" onclick="loadOAuthCalendars()">
+                                        📅 Browse My Calendars (OAuth)
+                                    </button>
+                                    <button class="btn btn-danger" onclick="logoutFromGoogle()">
+                                        Disconnect Google Account
+                                    </button>
+                                </div>
+                                <div id="googleTokenExpiry" class="hidden" style="margin-top: 10px; padding: 10px; background: #fff3cd; border-radius: 4px; font-size: 0.9em;">
+                                    <strong>⚠️ Token expiring soon</strong>
+                                    <p style="margin: 5px 0 0 0;">Your access will expire soon. Please reconnect your account.</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
                     <!-- Add Calendar -->
                     <div class="config-card">
                         <div class="config-header">
