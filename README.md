@@ -23,11 +23,8 @@ DISCORD_TOKEN=your_discord_bot_token_here
 
 ### 3. Run
 ```bash
-# Discord bot only
-npm start
-
-# With web interface
-npm run start:all
+# Discord bot, Web server & monitor program
+npm run pm2:start
 ```
 
 ### 4. Create Your First Event
