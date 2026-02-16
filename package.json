@@ -15,7 +15,17 @@
     "pm2:status": "pm2 status",
     "pm2:monitor": "node pm2-monitor.js",
     "pm2:delete": "pm2 delete all",
-    "diagnostic": "node diagnostic.js"
+    "diagnostic": "node diagnostic.js",
+    "calendar:diagnostic": "node calendar-diagnostic.js",
+    "calendar:debug": "node calendar-sync-debugger.js",
+    "calendar:fix": "node fix-calendar-sync.js",
+    "calendar:test": "node test-calendar-connection.js",
+    "health": "node health-check.js",
+    "diag:setup": "node setup-diagnostic.js",
+    "diag:database": "node database-diagnostic.js",
+    "diag:discord": "node discord-diagnostic.js",
+    "diag:web": "node webserver-diagnostic.js",
+    "diag:all": "node health-check.js"
   },
   "keywords": [
     "discord",

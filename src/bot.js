@@ -114,7 +114,7 @@ async function backgroundCalendarSync() {
       return;
     }
     
-    const result = await calendarService.syncEvents(168); // Next 7 days
+    const result = await calendarService.syncEvents(744); // Next 31 days
     
     if (!result.success) {
       console.log(`[BackgroundSync] Sync failed: ${result.message}`);

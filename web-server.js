@@ -455,7 +455,7 @@ app.post('/api/calendars/manual-sync', verifySession, async (req, res) => {
     );
     
     // Sync events
-    const result = await tempCalendarService.syncEvents(168); // Next 7 days
+    const result = await tempCalendarService.syncEvents(744); // Next 31 days
     
     if (!result.success) {
       return res.json({ success: false, error: result.message });
