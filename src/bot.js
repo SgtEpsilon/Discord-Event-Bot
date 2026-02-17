@@ -1,5 +1,5 @@
 // src/bot.js - Enhanced with database-aware automatic calendar sync
-// FIXED VERSION - Duplication prevention fixes applied
+// FIXED VERSION - Non-blocking EventTracker with error handling
 const { Client, GatewayIntentBits, REST, Routes } = require('discord.js');
 const fs = require('fs');
 const path = require('path');
@@ -442,13 +442,18 @@ async function syncFromCalendar(channelId, guildId, calendarFilter = null) {
         
         await event.update({ messageId: sentMessage.id });
         
-        // ✅ FIX: Track this posting to prevent duplicates
-        await eventTracker.markAsPosted(
-          event.id,
-          sentMessage.id,
-          channelId,
-          guildId
-        );
+        // ✅ FIX: Track this posting to prevent duplicates (with error handling)
+        try {
+          await eventTracker.markAsPosted(
+            event.id,
+            sentMessage.id,
+            channelId,
+            guildId
+          );
+        } catch (trackErr) {
+          console.error('[AutoSync] Warning: Failed to track event:', trackErr.message);
+          // Non-fatal - continue processing
+        }
         
         postedCount++;
         
@@ -537,16 +542,23 @@ async function checkMissedEvents() {
     
     for (const event of missedEvents) {
       try {
-        // ✅ FIX: Check tracker first to prevent re-posting
-        if (eventTracker.hasBeenPosted(event.id)) {
-          const postInfo = eventTracker.getPostingInfo(event.id);
-          console.log(`[RestartProtection] ⏭️  Event ${event.id} already tracked (message ${postInfo.messageId}), updating database`);
-          
-          await event.update({ 
-            messageId: postInfo.messageId,
-            channelId: postInfo.channelId
-          });
-          continue;
+        // ✅ FIX: Check tracker first to prevent re-posting (with error handling)
+        let alreadyPosted = false;
+        try {
+          alreadyPosted = eventTracker.hasBeenPosted(event.id);
+          if (alreadyPosted) {
+            const postInfo = eventTracker.getPostingInfo(event.id);
+            console.log(`[RestartProtection] ⏭️  Event ${event.id} already tracked (message ${postInfo.messageId}), updating database`);
+            
+            await event.update({ 
+              messageId: postInfo.messageId,
+              channelId: postInfo.channelId
+            });
+            continue;
+          }
+        } catch (trackErr) {
+          console.error('[RestartProtection] Warning: Tracker check failed:', trackErr.message);
+          // Continue with posting attempt
         }
         
         const channel = await client.channels.fetch(event.channelId).catch(() => null);
@@ -562,13 +574,18 @@ async function checkMissedEvents() {
           
           await event.update({ messageId: sentMessage.id });
           
-          // ✅ FIX: Track this posting to prevent duplicates
-          await eventTracker.markAsPosted(
-            event.id,
-            sentMessage.id,
-            event.channelId,
-            event.guildId
-          );
+          // ✅ FIX: Track this posting to prevent duplicates (with error handling)
+          try {
+            await eventTracker.markAsPosted(
+              event.id,
+              sentMessage.id,
+              event.channelId,
+              event.guildId
+            );
+          } catch (trackErr) {
+            console.error('[RestartProtection] Warning: Failed to track event:', trackErr.message);
+            // Non-fatal - continue processing
+          }
           
           missedCount++;
           
@@ -789,20 +806,32 @@ client.once('clientReady', async () => {
   console.log(`║ 📺 YouTube Monitor: Enabled (RSS-based)`);
   console.log(`║ 🌐 Web Event Poster: Starting...`);
   
-  // ✅ FIX: Load event tracker FIRST before starting services
+  // ✅ FIX: Load event tracker with error handling (non-blocking)
   console.log('║ 📊 Event Tracker: Loading...');
-  await eventTracker.load();
-  const trackerStats = eventTracker.getStats();
-  console.log(`║ 📊 Event Tracker: ${trackerStats.totalTracked} events tracked`);
-  
-  // ✅ FIX: Sync tracker with database (startup reconciliation)
-  await eventTracker.syncWithDatabase();
-  console.log('║ 📊 Event Tracker: Synced with database');
+  try {
+    await eventTracker.load();
+    const trackerStats = eventTracker.getStats();
+    console.log(`║ 📊 Event Tracker: ${trackerStats.totalTracked} events tracked`);
+    
+    // ✅ FIX: Sync tracker with database (startup reconciliation)
+    await eventTracker.syncWithDatabase();
+    console.log('║ 📊 Event Tracker: Synced with database');
+  } catch (trackerErr) {
+    console.error('║ ⚠️  Event Tracker: Failed to load - continuing without it');
+    console.error('║ ⚠️  Error:', trackerErr.message);
+    // Continue without tracker - don't crash the bot
+  }
   
   // Start backup service
   console.log('║ 💾 Backup Service: Starting...');
-  await backupService.start();
-  console.log('║ 💾 Backup Service: Scheduled for Sundays at 12:00 AM');
+  try {
+    await backupService.start();
+    console.log('║ 💾 Backup Service: Scheduled for Sundays at 12:00 AM');
+  } catch (backupErr) {
+    console.error('║ ⚠️  Backup Service: Failed to start');
+    console.error('║ ⚠️  Error:', backupErr.message);
+  }
+  
   console.log('╚═══════════════════════════════════════════════════════╝\n');
   
   config.discord.clientId = client.user.id;
@@ -819,7 +848,7 @@ client.once('clientReady', async () => {
   youtubeMonitor = new YouTubeMonitor(client, config, streamingConfig);
   youtubeMonitor.start();
   
-  // ✅ FIX: Start services AFTER tracker is loaded
+  // ✅ Start services (tracker already loaded)
   webEventPoster.start();
   
   // START BACKGROUND CALENDAR SYNC (for web UI)
@@ -1007,7 +1036,11 @@ function formatUptime(seconds) {
 // Graceful shutdown handlers
 process.on('SIGINT', async () => {
   console.log('\n[Shutdown] Saving event tracker...');
-  await eventTracker.save();
+  try {
+    await eventTracker.save();
+  } catch (err) {
+    console.error('[Shutdown] Error saving tracker:', err.message);
+  }
   
   console.log('[Shutdown] Stopping backup service...');
   backupService.stop();
@@ -1021,7 +1054,11 @@ process.on('SIGINT', async () => {
 
 process.on('SIGTERM', async () => {
   console.log('\n[Shutdown] Saving event tracker...');
-  await eventTracker.save();
+  try {
+    await eventTracker.save();
+  } catch (err) {
+    console.error('[Shutdown] Error saving tracker:', err.message);
+  }
   
   console.log('[Shutdown] Stopping backup service...');
   backupService.stop();
