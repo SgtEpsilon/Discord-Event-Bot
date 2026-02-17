@@ -1,4 +1,5 @@
 // src/bot.js - Enhanced with database-aware automatic calendar sync
+// FIXED VERSION - Duplication prevention fixes applied
 const { Client, GatewayIntentBits, REST, Routes } = require('discord.js');
 const fs = require('fs');
 const path = require('path');
@@ -440,6 +441,15 @@ async function syncFromCalendar(channelId, guildId, calendarFilter = null) {
         });
         
         await event.update({ messageId: sentMessage.id });
+        
+        // ✅ FIX: Track this posting to prevent duplicates
+        await eventTracker.markAsPosted(
+          event.id,
+          sentMessage.id,
+          channelId,
+          guildId
+        );
+        
         postedCount++;
         
       } catch (error) {
@@ -504,7 +514,7 @@ async function restoreAutoSync() {
 }
 
 /**
- * Check for missed events during downtime
+ * ✅ FIXED: Check for missed events during downtime - NOW WITH TRACKING
  */
 async function checkMissedEvents() {
   console.log('[RestartProtection] 🔍 Checking for events that should have been posted during downtime...');
@@ -527,6 +537,18 @@ async function checkMissedEvents() {
     
     for (const event of missedEvents) {
       try {
+        // ✅ FIX: Check tracker first to prevent re-posting
+        if (eventTracker.hasBeenPosted(event.id)) {
+          const postInfo = eventTracker.getPostingInfo(event.id);
+          console.log(`[RestartProtection] ⏭️  Event ${event.id} already tracked (message ${postInfo.messageId}), updating database`);
+          
+          await event.update({ 
+            messageId: postInfo.messageId,
+            channelId: postInfo.channelId
+          });
+          continue;
+        }
+        
         const channel = await client.channels.fetch(event.channelId).catch(() => null);
         
         if (channel) {
@@ -539,6 +561,15 @@ async function checkMissedEvents() {
           });
           
           await event.update({ messageId: sentMessage.id });
+          
+          // ✅ FIX: Track this posting to prevent duplicates
+          await eventTracker.markAsPosted(
+            event.id,
+            sentMessage.id,
+            event.channelId,
+            event.guildId
+          );
+          
           missedCount++;
           
           console.log(`[RestartProtection] ✅ Posted missed event: ${event.title}`);
@@ -757,13 +788,16 @@ client.once('clientReady', async () => {
   console.log(`║ 🎮 Twitch Monitor: ${config.twitch?.enabled ? 'Enabled' : 'Disabled (no credentials)'}`);
   console.log(`║ 📺 YouTube Monitor: Enabled (RSS-based)`);
   console.log(`║ 🌐 Web Event Poster: Starting...`);
-  console.log('╚═══════════════════════════════════════════════════════╝\n');
   
-  // Initialize event tracker (load from file)
+  // ✅ FIX: Load event tracker FIRST before starting services
   console.log('║ 📊 Event Tracker: Loading...');
   await eventTracker.load();
   const trackerStats = eventTracker.getStats();
   console.log(`║ 📊 Event Tracker: ${trackerStats.totalTracked} events tracked`);
+  
+  // ✅ FIX: Sync tracker with database (startup reconciliation)
+  await eventTracker.syncWithDatabase();
+  console.log('║ 📊 Event Tracker: Synced with database');
   
   // Start backup service
   console.log('║ 💾 Backup Service: Starting...');
@@ -785,7 +819,7 @@ client.once('clientReady', async () => {
   youtubeMonitor = new YouTubeMonitor(client, config, streamingConfig);
   youtubeMonitor.start();
   
-  // Start web event poster
+  // ✅ FIX: Start services AFTER tracker is loaded
   webEventPoster.start();
   
   // START BACKGROUND CALENDAR SYNC (for web UI)
