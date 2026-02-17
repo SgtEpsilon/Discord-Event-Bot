@@ -226,7 +226,18 @@ async function loadEvents() {
         container.innerHTML = events.map(event => {
             const eventDate = new Date(event.dateTime);
             const isPast = eventDate < new Date();
-            const signupCount = Object.keys(event.signups || {}).length;
+            // FIX: Handle both signup formats:
+            //   role-based: { roleName: [userId1, userId2] }
+            //   user-keyed: { userId: { role, signedUpAt } }
+            const signups = event.signups || {};
+            let signupCount = 0;
+            for (const val of Object.values(signups)) {
+              if (Array.isArray(val)) {
+                signupCount += val.length;
+              } else if (val && typeof val === 'object') {
+                signupCount += 1;
+              }
+            }
             
             // Check if it's an iCal event
             const isIcal = event.calendarSource && 

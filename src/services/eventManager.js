@@ -6,7 +6,12 @@ const { GoogleCalendarService } = require('./googleCalendar');
 class EventManager {
   constructor(eventsFilePath = null, calendarService = null) {
     this.eventsFilePath = eventsFilePath;
-    this.googleCalendar = calendarService || new GoogleCalendarService();
+    try {
+      this.googleCalendar = calendarService || new GoogleCalendarService();
+    } catch (err) {
+      console.warn('⚠️  GoogleCalendarService unavailable:', err.message);
+      this.googleCalendar = null;
+    }
   }
 
   async createEvent(eventData) {
@@ -26,7 +31,7 @@ class EventManager {
     });
 
     // Add to Google Calendar if specified
-    if (eventData.addToCalendar && eventData.calendarId) {
+    if (eventData.addToCalendar && eventData.calendarId && this.googleCalendar) {
       try {
         const calendarResult = await this.googleCalendar.createEvent(eventData.calendarId, {
           title: eventData.title,
@@ -101,7 +106,7 @@ class EventManager {
     await event.update(updates);
 
     // Update Google Calendar event if it exists
-    if (event.calendarEventId && event.calendarSource) {
+    if (event.calendarEventId && event.calendarSource && this.googleCalendar) {
       try {
         await this.googleCalendar.updateEvent(event.calendarSource, event.calendarEventId, {
           title: event.title,
@@ -124,7 +129,7 @@ class EventManager {
     }
 
     // Delete from Google Calendar if it exists
-    if (event.calendarEventId && event.calendarSource) {
+    if (event.calendarEventId && event.calendarSource && this.googleCalendar) {
       try {
         await this.googleCalendar.deleteEvent(event.calendarSource, event.calendarEventId);
       } catch (error) {
@@ -172,14 +177,27 @@ class EventManager {
     }
 
     const signups = event.signups || {};
-    
-    if (!signups[userId]) {
-      throw new Error('User not signed up for this event');
+    let removed = false;
+
+    // Handle role-based signups: { roleName: [userId1, userId2] }
+    for (const [key, val] of Object.entries(signups)) {
+      if (Array.isArray(val) && val.includes(userId)) {
+        signups[key] = val.filter(id => id !== userId);
+        removed = true;
+      }
     }
 
-    delete signups[userId];
-    await event.update({ signups });
-    return event.toJSON();
+    // Handle user-keyed signups: { userId: { role, signedUpAt } }
+    if (!removed && signups[userId]) {
+      delete signups[userId];
+      removed = true;
+    }
+
+    if (removed) {
+      await event.update({ signups });
+    }
+
+    return { removed, event: event.toJSON() };
   }
 
   async importCalendarEvent(calendarId, calendarEventId, additionalData = {}) {
