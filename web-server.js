@@ -1,7 +1,11 @@
 // web-server.js - Discord Event Bot Web Interface Server
+require('dotenv').config();
 const express = require('express');
 const path = require('path');
 const fs = require('fs');
+
+// Database initialization - MUST happen before using any models
+const { testConnection, initializeDatabase } = require('./src/config/database');
 
 // FIXED IMPORTS - Use the actual file structure
 const EventManager = require('./src/services/eventManager');
@@ -23,11 +27,26 @@ let calendarService = null;
 try {
   calendarService = new CalendarService(
     config.google?.credentials,
-    config.google?.calendars
+    config.google?.calendars || []
   );
 } catch (err) {
-  console.warn('⚠️  CalendarService failed to initialize (calendar features may be limited):', err.message);
+  console.warn('⚠️  CalendarService failed to initialize:', err.message);
 }
+
+// Initialize database on startup
+(async () => {
+  try {
+    const connected = await testConnection();
+    if (connected) {
+      await initializeDatabase();
+      console.log('[Web Server] ✅ Database initialized');
+    } else {
+      console.error('[Web Server] ❌ Database connection failed - events will not load');
+    }
+  } catch (err) {
+    console.error('[Web Server] ❌ Database initialization error:', err.message);
+  }
+})();
 
 // Session storage (in production, use Redis or database)
 const sessions = new Map();
@@ -74,26 +93,13 @@ app.get('/api/auth/check', verifySession, (req, res) => {
 app.get('/api/stats', verifySession, async (req, res) => {
   try {
     const allEvents = await eventManager.getAllEvents();
-    // FIX: getAllEvents() returns an array from the DB-backed service
-    const events = Array.isArray(allEvents) ? allEvents : Object.values(allEvents);
+    const events = Object.values(allEvents);
     const now = new Date();
     
     const upcomingEvents = events.filter(e => new Date(e.dateTime) > now).length;
-    // FIX: Handle both signup formats:
-    //   role-based: { roleName: [userId1, userId2] }
-    //   user-keyed: { userId: { role, signedUpAt } }
-    const totalSignups = events.reduce((sum, e) => {
-      const signups = e.signups || {};
-      let count = 0;
-      for (const val of Object.values(signups)) {
-        if (Array.isArray(val)) {
-          count += val.length;
-        } else if (val && typeof val === 'object') {
-          count += 1;
-        }
-      }
-      return sum + count;
-    }, 0);
+    const totalSignups = events.reduce((sum, e) => 
+      sum + Object.values(e.signups || {}).reduce((total, arr) => total + arr.length, 0), 0
+    );
     
     const presets = await presetManager.loadPresets();
     
@@ -114,8 +120,7 @@ app.get('/api/stats', verifySession, async (req, res) => {
 app.get('/api/events', verifySession, async (req, res) => {
   try {
     const allEvents = await eventManager.getAllEvents();
-    // FIX: getAllEvents() from DB-backed service returns an array directly
-    const events = Array.isArray(allEvents) ? allEvents : Object.values(allEvents);
+    const events = Object.values(allEvents);
     res.json(events);
   } catch (error) {
     console.error('Error loading events:', error);
@@ -134,7 +139,7 @@ app.post('/api/events', verifySession, async (req, res) => {
     
     // Add to Google Calendar if requested
     let calendarLink = null;
-    if (eventData.addToCalendar && eventData.calendarId && calendarService) {
+    if (eventData.addToCalendar && eventData.calendarId) {
       try {
         calendarLink = await calendarService.createEvent(eventData);
       } catch (error) {
@@ -968,23 +973,6 @@ function getBackupAge(created) {
     return 'Just now';
   }
 }
-
-// ==================== DEBUG ====================
-// Temporary diagnostic endpoint - remove after confirming events load
-app.get('/api/debug', verifySession, async (req, res) => {
-  try {
-    const raw = await eventManager.getAllEvents();
-    res.json({
-      type: Array.isArray(raw) ? 'array' : typeof raw,
-      length: Array.isArray(raw) ? raw.length : Object.keys(raw || {}).length,
-      sample: Array.isArray(raw) ? raw[0] : Object.values(raw || {})[0],
-      calendarServiceAvailable: !!calendarService,
-      googleCalendarAvailable: !!eventManager.googleCalendar
-    });
-  } catch (err) {
-    res.status(500).json({ error: err.message, stack: err.stack });
-  }
-});
 
 // ==================== SERVER STARTUP ====================
 
