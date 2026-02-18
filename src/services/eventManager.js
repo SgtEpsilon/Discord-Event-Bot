@@ -2,6 +2,7 @@
 const { Event } = require('../models');
 const { Op } = require('sequelize');
 const { GoogleCalendarService } = require('./googleCalendar');
+const { parseDateTime } = require('../utils/datetime');
 
 class EventManager {
   constructor(eventsFilePath = null, calendarService = null) {
@@ -15,11 +16,18 @@ class EventManager {
   }
 
   async createEvent(eventData) {
+    // Support DD-MM-YYYY HH:MM format (Discord) as well as ISO date strings
+    let parsedDate = parseDateTime(eventData.dateTime);
+    if (!parsedDate) parsedDate = new Date(eventData.dateTime);
+    if (!parsedDate || isNaN(parsedDate.getTime())) {
+      throw new Error(`Invalid date format: "${eventData.dateTime}". Please use DD-MM-YYYY HH:MM (e.g., 15-02-2026 20:00)`);
+    }
+
     const event = await Event.create({
       id: eventData.id,
       title: eventData.title,
       description: eventData.description || '',
-      dateTime: new Date(eventData.dateTime),
+      dateTime: parsedDate,
       duration: eventData.duration || 60,
       maxParticipants: eventData.maxParticipants || 0,
       roles: eventData.roles || [],
@@ -36,7 +44,7 @@ class EventManager {
         const calendarResult = await this.googleCalendar.createEvent(eventData.calendarId, {
           title: eventData.title,
           description: eventData.description,
-          dateTime: eventData.dateTime,
+          dateTime: parsedDate.toISOString(),
           duration: eventData.duration
         });
 
@@ -149,18 +157,15 @@ class EventManager {
 
     const signups = event.signups || {};
     
-    // Check if user is already signed up
     if (signups[userId]) {
       throw new Error('User already signed up for this event');
     }
 
-    // Check max participants limit
     const currentSignups = Object.keys(signups).length;
     if (event.maxParticipants > 0 && currentSignups >= event.maxParticipants) {
       throw new Error('Event is full');
     }
 
-    // Add user signup
     signups[userId] = {
       role: role,
       signedUpAt: new Date().toISOString()
@@ -202,10 +207,8 @@ class EventManager {
 
   async importCalendarEvent(calendarId, calendarEventId, additionalData = {}) {
     try {
-      // Fetch event from Google Calendar
       const calendarEvent = await this.googleCalendar.getEvent(calendarId, calendarEventId);
       
-      // Create event in database
       const eventData = {
         id: additionalData.id || `gcal_${calendarEventId}`,
         title: calendarEvent.summary,
@@ -228,12 +231,9 @@ class EventManager {
 
   toJSON(event) {
     if (!event) return null;
-    
-    // If it's already a plain object, return it
     if (typeof event.toJSON === 'function') {
       return event.toJSON();
     }
-    
     return event;
   }
 }

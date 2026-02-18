@@ -12,7 +12,7 @@ module.exports = {
 
     try {
       const presetCount = await presetManager.getPresetCount();
-	  const calendarCount = calendarService?.calendars?.length ?? 0;
+      const calendarCount = calendarService.getCalendars().length;
 
       const embed = new EmbedBuilder()
         .setColor(0x5865F2)

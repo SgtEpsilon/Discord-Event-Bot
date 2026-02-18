@@ -1,34 +1,45 @@
-// src/services/calendar.js - FIXED VERSION
-// This version properly handles relative credential paths
+// src/services/calendar.js
+// Supports two auth modes:
+//   1. OAuth2 (preferred) — pass an authenticated OAuth2 client as `authClient`
+//   2. Service account    — pass a file path string as `credentialsPath`
+// When called from bot.js / web-server.js, an OAuth client is injected automatically
+// by getCalendarsFromDatabase() / createCalendarService() if one is connected.
 
 const { google } = require('googleapis');
 const ical = require('node-ical');
 const path = require('path');
 
 class CalendarService {
-  constructor(credentialsPath, calendars = []) {
+  constructor(credentialsPathOrAuthClient, calendars = []) {
     this.calendars = calendars;
     this.events = [];
-    
-    if (credentialsPath) {
-      try {
-        // ✅ FIX: Resolve path relative to project root (where bot runs from)
-        const fullPath = path.resolve(process.cwd(), credentialsPath);
-        
-        // ✅ FIX: Use keyFilename so Google Auth reads the file
-        this.auth = new google.auth.GoogleAuth({
-          keyFilename: fullPath,  // Google Auth will read and parse the file
+
+    if (!credentialsPathOrAuthClient) {
+      console.log('[Calendar] Google Calendar not configured');
+      this.calendar = null;
+      return;
+    }
+
+    try {
+      let auth;
+
+      if (typeof credentialsPathOrAuthClient === 'string') {
+        // Service account JSON file path
+        const fullPath = path.resolve(process.cwd(), credentialsPathOrAuthClient);
+        auth = new google.auth.GoogleAuth({
+          keyFilename: fullPath,
           scopes: ['https://www.googleapis.com/auth/calendar.readonly']
         });
-        
-        this.calendar = google.calendar({ version: 'v3', auth: this.auth });
-        console.log(`[Calendar] ✅ Google Calendar API initialized with credentials from: ${credentialsPath}`);
-      } catch (error) {
-        console.error('[Calendar] Failed to initialize Google Calendar:', error.message);
-        this.calendar = null;
+        console.log(`[Calendar] ✅ Initialized with service account: ${credentialsPathOrAuthClient}`);
+      } else {
+        // OAuth2 client passed directly (from googleOAuth.js)
+        auth = credentialsPathOrAuthClient;
+        console.log('[Calendar] ✅ Initialized with OAuth2 user account');
       }
-    } else {
-      console.log('[Calendar] Google Calendar not configured');
+
+      this.calendar = google.calendar({ version: 'v3', auth });
+    } catch (error) {
+      console.error('[Calendar] Failed to initialize Google Calendar:', error.message);
       this.calendar = null;
     }
   }

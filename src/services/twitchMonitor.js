@@ -74,7 +74,7 @@ class TwitchMonitor {
         this.isCheckingStreams = true;
 
         try {
-            const allConfigs = await this.streamingConfig.getAllGuildConfigs();
+            const allConfigs = this.streamingConfig.getAllGuildConfigs();
             const allStreamers = new Set();
 
             // Collect all unique streamers across all guilds

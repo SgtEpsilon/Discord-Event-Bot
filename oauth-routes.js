@@ -1,238 +1,173 @@
-// oauth-routes.js - Google OAuth Routes
-const express = require('express');
-const router = express.Router();
-const GoogleOAuthService = require('./googleOAuth');
-const googleOAuth = new GoogleOAuthService();
+// oauth-routes.js - Google OAuth routes mounted at /api by web-server.js
+// Endpoints consumed by public/script.js:
+//   GET  /api/oauth/google/status        — is OAuth configured in .env?
+//   GET  /api/oauth/google/user-status   — is a Google account connected?
+//   POST /api/oauth/google/login         — start OAuth flow, return redirect URL
+//   GET  /api/oauth/google/callback      — Google redirects here with ?code=...
+//   POST /api/oauth/google/logout        — disconnect Google account
+//   GET  /api/oauth/google/calendars     — list calendars for the connected account
 
-// Helper function to verify session
+const express = require('express');
+const router  = express.Router();
+
+// Lazy-load GoogleOAuth so the route file loads even if env vars are missing at startup
+let _oauthInstance = null;
+function getOAuth() {
+  if (!_oauthInstance) {
+    const GoogleOAuth = require('./googleOAuth');
+    _oauthInstance = new GoogleOAuth();
+  }
+  return _oauthInstance;
+}
+
+// Re-use the session auth middleware from web-server.js via app.locals
 function verifySession(req, res, next) {
   const token = req.headers['x-auth-token'];
-  const sessions = req.app.locals.sessions;
-  
-  if (!token || !sessions.has(token)) {
+  if (!token || !req.app.locals.sessions?.has(token)) {
     return res.status(401).json({ error: 'Unauthorized' });
   }
-  
   next();
 }
 
-// ==================== GOOGLE OAUTH ROUTES ====================
-
-// Check if OAuth is configured
+// ─── Is OAuth configured? ────────────────────────────────────────────────────
+// The UI checks this on load to decide whether to show the Connect button.
 router.get('/oauth/google/status', (req, res) => {
+  const configured = !!(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET);
   res.json({
-    configured: googleOAuth.isConfigured(),
-    redirectUri: process.env.GOOGLE_OAUTH_REDIRECT_URI || 'http://localhost:3000/api/auth/google/callback'
+    configured,
+    redirectUri: process.env.GOOGLE_REDIRECT_URI || 'http://localhost:3000/api/oauth/google/callback'
   });
 });
 
-// Get current user's OAuth status
+// ─── Is a Google account currently connected? ────────────────────────────────
 router.get('/oauth/google/user-status', verifySession, async (req, res) => {
   try {
-    const token = req.headers['x-auth-token'];
-    const sessions = req.app.locals.sessions;
-    const session = sessions.get(token);
-    
-    if (!session) {
-      return res.json({ authenticated: false });
-    }
-
-    const { UserOAuth } = require('./src/models');
-    const userOAuth = await UserOAuth.findOne({
-      where: { userId: session.username }
-    });
-
-    if (!userOAuth) {
-      return res.json({ authenticated: false });
-    }
-
-    // Check if token is expired
-    const now = new Date();
-    const isExpired = userOAuth.tokenExpiry && new Date(userOAuth.tokenExpiry) < now;
-
-    res.json({
-      authenticated: true,
-      user: {
-        email: userOAuth.email,
-        name: userOAuth.name,
-        picture: userOAuth.picture,
-        tokenExpiry: userOAuth.tokenExpiry
-      },
-      tokenExpired: isExpired
-    });
-  } catch (error) {
-    console.error('Error checking OAuth status:', error);
-    res.json({ authenticated: false });
+    const oauth = getOAuth();
+    const authenticated = await oauth.isAuthenticated();
+    const account = authenticated ? await oauth.getConnectedAccount() : null;
+    res.json({ authenticated, account });
+  } catch (err) {
+    console.error('[OAuth] user-status error:', err.message);
+    res.json({ authenticated: false, account: null });
   }
 });
 
-// Start OAuth flow
-router.get('/oauth/google/login', verifySession, (req, res) => {
+// ─── Start OAuth flow ────────────────────────────────────────────────────────
+// Returns the Google consent-screen URL; the UI opens it in a new tab/window.
+router.post('/oauth/google/login', verifySession, (req, res) => {
   try {
-    if (!googleOAuth.isConfigured()) {
-      return res.status(400).json({ 
-        error: 'OAuth not configured. Please set GOOGLE_OAUTH_CLIENT_ID and GOOGLE_OAUTH_CLIENT_SECRET in .env' 
+    const oauth = getOAuth();
+    const authUrl = oauth.getAuthUrl();
+    res.json({ success: true, authUrl });
+  } catch (err) {
+    console.error('[OAuth] login error:', err.message);
+    res.status(500).json({
+      success: false,
+      error: err.message,
+      hint: 'Make sure GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET are set in your .env file.'
+    });
+  }
+});
+
+// ─── OAuth callback ──────────────────────────────────────────────────────────
+// Google redirects here after the user approves access.
+// Exchanges the code for tokens, saves them, then shows a close-window page.
+router.get('/oauth/google/callback', async (req, res) => {
+  const { code, error } = req.query;
+
+  if (error) {
+    console.error('[OAuth] Callback error from Google:', error);
+    return res.send(callbackPage(false, `Google returned an error: ${error}`));
+  }
+
+  if (!code) {
+    return res.send(callbackPage(false, 'No authorisation code received from Google.'));
+  }
+
+  try {
+    const oauth = getOAuth();
+    const { profile } = await oauth.handleCallback(code);
+    console.log(`[OAuth] ✅ Connected Google account: ${profile.email}`);
+    res.send(callbackPage(true, `Connected as ${profile.email}`));
+  } catch (err) {
+    console.error('[OAuth] Callback exchange error:', err.message);
+    res.send(callbackPage(false, err.message));
+  }
+});
+
+// ─── Disconnect Google account ───────────────────────────────────────────────
+router.post('/oauth/google/logout', verifySession, async (req, res) => {
+  try {
+    const oauth = getOAuth();
+    await oauth.revokeAndDisconnect();
+    _oauthInstance = null; // reset so next login gets a fresh instance
+    res.json({ success: true });
+  } catch (err) {
+    console.error('[OAuth] logout error:', err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ─── List calendars for the connected account ────────────────────────────────
+router.get('/oauth/google/calendars', verifySession, async (req, res) => {
+  try {
+    const oauth = getOAuth();
+
+    const authenticated = await oauth.isAuthenticated();
+    if (!authenticated) {
+      return res.status(401).json({
+        error: 'No Google account connected. Please connect via the Google Calendar tab.'
       });
     }
 
-    const token = req.headers['x-auth-token'];
-    const authUrl = googleOAuth.getAuthUrl(token);
-    
-    res.json({ authUrl });
-  } catch (error) {
-    console.error('Error starting OAuth flow:', error);
-    res.status(500).json({ error: error.message });
+    const calendars = await oauth.listCalendars();
+    res.json(calendars);
+  } catch (err) {
+    console.error('[OAuth] calendars error:', err.message);
+    res.status(500).json({ error: err.message });
   }
 });
 
-// OAuth callback
-router.get('/auth/google/callback', async (req, res) => {
-  try {
-    const { code, state } = req.query;
+// ─── Helper: tiny HTML page shown after OAuth callback ───────────────────────
+function callbackPage(success, message) {
+  const icon  = success ? '✅' : '❌';
+  const title = success ? 'Google Account Connected' : 'Authentication Failed';
+  const color = success ? '#2ecc71' : '#e74c3c';
 
-    if (!code) {
-      return res.redirect('/?error=oauth_failed');
+  return `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>${title}</title>
+  <style>
+    body { font-family: sans-serif; display: flex; align-items: center;
+           justify-content: center; min-height: 100vh; margin: 0;
+           background: #1a1a2e; color: #eee; }
+    .card { background: #16213e; border-radius: 12px; padding: 40px;
+            text-align: center; max-width: 400px; border: 1px solid ${color}; }
+    .icon { font-size: 48px; margin-bottom: 16px; }
+    h2 { color: ${color}; margin: 0 0 12px; }
+    p  { color: #aaa; margin: 0 0 24px; }
+    button { background: ${color}; color: white; border: none; padding: 10px 24px;
+             border-radius: 6px; font-size: 14px; cursor: pointer; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="icon">${icon}</div>
+    <h2>${title}</h2>
+    <p>${message}</p>
+    <button onclick="window.close()">Close this window</button>
+  </div>
+  <script>
+    // Auto-notify the opener and close after 2 seconds
+    if (window.opener) {
+      window.opener.postMessage({ type: 'GOOGLE_OAUTH_COMPLETE', success: ${success} }, '*');
+      setTimeout(() => window.close(), 2000);
     }
-
-    // Exchange code for tokens
-    const tokens = await googleOAuth.getTokens(code);
-    
-    // Get user info
-    const userInfo = await googleOAuth.getUserInfo(tokens);
-
-    // Verify session from state parameter
-    const sessionToken = state;
-    const sessions = req.app.locals.sessions;
-    const session = sessions.get(sessionToken);
-
-    if (!session) {
-      return res.redirect('/?error=session_expired');
-    }
-
-    // Save tokens to database
-    const { UserOAuth } = require('./src/models');
-    await UserOAuth.upsert({
-      userId: session.username,
-      provider: 'google',
-      email: userInfo.email,
-      name: userInfo.name,
-      picture: userInfo.picture,
-      accessToken: tokens.access_token,
-      refreshToken: tokens.refresh_token,
-      tokenExpiry: tokens.expiry_date ? new Date(tokens.expiry_date) : null,
-      scopes: tokens.scope ? tokens.scope.split(' ') : []
-    });
-
-    console.log(`[OAuth] User ${userInfo.email} authenticated successfully`);
-
-    // Redirect back to calendar page with success
-    res.redirect('/?oauth=success#calendar');
-  } catch (error) {
-    console.error('Error in OAuth callback:', error);
-    res.redirect('/?error=oauth_failed');
-  }
-});
-
-// Logout from Google (revoke tokens)
-router.post('/oauth/google/logout', verifySession, async (req, res) => {
-  try {
-    const token = req.headers['x-auth-token'];
-    const sessions = req.app.locals.sessions;
-    const session = sessions.get(token);
-
-    if (!session) {
-      return res.status(401).json({ error: 'Not authenticated' });
-    }
-
-    const { UserOAuth } = require('./src/models');
-    const userOAuth = await UserOAuth.findOne({
-      where: { userId: session.username }
-    });
-
-    if (userOAuth) {
-      // Revoke token with Google
-      try {
-        await googleOAuth.revokeToken(userOAuth.accessToken);
-      } catch (error) {
-        console.error('Error revoking token:', error);
-        // Continue anyway to delete from database
-      }
-
-      // Delete from database
-      await userOAuth.destroy();
-    }
-
-    res.json({ success: true });
-  } catch (error) {
-    console.error('Error logging out:', error);
-    res.status(500).json({ error: error.message });
-  }
-});
-
-// Get user's calendars via OAuth
-router.get('/oauth/google/calendars', verifySession, async (req, res) => {
-  try {
-    const token = req.headers['x-auth-token'];
-    const sessions = req.app.locals.sessions;
-    const session = sessions.get(token);
-
-    if (!session) {
-      return res.status(401).json({ error: 'Not authenticated' });
-    }
-
-    const { UserOAuth } = require('./src/models');
-    let userOAuth = await UserOAuth.findOne({
-      where: { userId: session.username }
-    });
-
-    if (!userOAuth) {
-      return res.status(401).json({ error: 'Not connected to Google Calendar' });
-    }
-
-    // Check if token is expired and refresh if needed
-    const now = new Date();
-    if (userOAuth.tokenExpiry && new Date(userOAuth.tokenExpiry) < now) {
-      if (userOAuth.refreshToken) {
-        try {
-          const newTokens = await googleOAuth.refreshAccessToken(userOAuth.refreshToken);
-          await userOAuth.update({
-            accessToken: newTokens.access_token,
-            tokenExpiry: newTokens.expiry_date ? new Date(newTokens.expiry_date) : null
-          });
-        } catch (error) {
-          console.error('Error refreshing token:', error);
-          return res.status(401).json({ error: 'Token expired. Please login again.' });
-        }
-      } else {
-        return res.status(401).json({ error: 'Token expired. Please login again.' });
-      }
-    }
-
-    // Get calendars
-    const tokens = {
-      access_token: userOAuth.accessToken,
-      refresh_token: userOAuth.refreshToken,
-      expiry_date: userOAuth.tokenExpiry ? new Date(userOAuth.tokenExpiry).getTime() : null
-    };
-
-    const calendars = await googleOAuth.listCalendars(tokens);
-
-    res.json({
-      success: true,
-      calendars: calendars.map(cal => ({
-        id: cal.id,
-        summary: cal.summary,
-        description: cal.description || '',
-        primary: cal.primary || false,
-        accessRole: cal.accessRole,
-        backgroundColor: cal.backgroundColor,
-        foregroundColor: cal.foregroundColor
-      }))
-    });
-  } catch (error) {
-    console.error('Error fetching OAuth calendars:', error);
-    res.status(500).json({ success: false, error: error.message });
-  }
-});
+  </script>
+</body>
+</html>`;
+}
 
 module.exports = router;

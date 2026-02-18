@@ -1,0 +1,95 @@
+{
+  "1460761916619227361": [
+    {
+      "id": "1460761917625733217",
+      "name": "general",
+      "type": 0,
+      "parentId": "1460761917625733215",
+      "position": 0
+    },
+    {
+      "id": "1460765710216069344",
+      "name": "test",
+      "type": 0,
+      "parentId": null,
+      "position": 0
+    },
+    {
+      "id": "1461961771005907055",
+      "name": "staff-chat-channel",
+      "type": 0,
+      "parentId": "1462394559223828624",
+      "position": 0
+    },
+    {
+      "id": "1462394506325528657",
+      "name": "promotion-channel",
+      "type": 0,
+      "parentId": "1462394392680861696",
+      "position": 0
+    },
+    {
+      "id": "1464672864023089296",
+      "name": "commands",
+      "type": 0,
+      "parentId": "1464672844326764675",
+      "position": 0
+    },
+    {
+      "id": "1469685734867861511",
+      "name": "event-signup",
+      "type": 0,
+      "parentId": "1469502034851004446",
+      "position": 0
+    },
+    {
+      "id": "1460772328517533893",
+      "name": "shift-signup",
+      "type": 0,
+      "parentId": "1462394559223828624",
+      "position": 1
+    },
+    {
+      "id": "1462394746692567081",
+      "name": "commands",
+      "type": 0,
+      "parentId": "1462394392680861696",
+      "position": 1
+    },
+    {
+      "id": "1464122142928146465",
+      "name": "git-token",
+      "type": 0,
+      "parentId": "1460761917625733215",
+      "position": 1
+    },
+    {
+      "id": "1470242094248493249",
+      "name": "notifications",
+      "type": 0,
+      "parentId": "1469502034851004446",
+      "position": 1
+    },
+    {
+      "id": "1468702447361982655",
+      "name": "bot-tokens",
+      "type": 0,
+      "parentId": "1460761917625733215",
+      "position": 2
+    },
+    {
+      "id": "1469502056435024003",
+      "name": "commands",
+      "type": 0,
+      "parentId": "1469502034851004446",
+      "position": 2
+    },
+    {
+      "id": "1462394422124740805",
+      "name": "links",
+      "type": 0,
+      "parentId": "1460761917625733215",
+      "position": 3
+    }
+  ]
+}

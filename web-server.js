@@ -453,7 +453,7 @@ app.delete('/api/calendars/:id', verifySession, async (req, res) => {
 app.post('/api/calendars/manual-sync', verifySession, async (req, res) => {
   try {
     // Load calendars from database instead of config
-    const { CalendarConfig } = require('./src/models');
+    const { CalendarConfig, EventsConfig, Event } = require('./src/models');
     const dbCalendars = await CalendarConfig.findAll();
     
     if (dbCalendars.length === 0) {
@@ -484,40 +484,89 @@ app.post('/api/calendars/manual-sync', verifySession, async (req, res) => {
     if (!result.success) {
       return res.json({ success: false, error: result.message });
     }
+
+    // Get all guilds that have an event channel configured so we can
+    // stamp guildId/channelId on each imported event — this is what
+    // allows webEventPoster to actually post them to Discord.
+    const guildConfigs = await EventsConfig.findAll({
+      where: {
+        eventChannelId: { [require('sequelize').Op.not]: null }
+      }
+    });
+
+    console.log(`[Manual Sync] Found ${guildConfigs.length} guild(s) with event channels configured`);
     
     let importedCount = 0;
-    const { Event } = require('./src/models');
     
     for (const eventData of result.events) {
       try {
-        // Check if event already exists by calendarSourceId
-        const exists = await Event.findOne({
-          where: { calendarSourceId: eventData.calendarSourceId }
-        });
-        
-        if (!exists) {
-          const eventId = `gcal_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-          
-          await Event.create({
-            id: eventId,
-            title: eventData.calendarEvent.summary || 'Untitled Event',
-            description: eventData.calendarEvent.description || '',
-            dateTime: new Date(eventData.calendarEvent.start.dateTime),
-            duration: eventData.duration,
-            maxParticipants: 0,
-            roles: [],
-            signups: {},
-            createdBy: 'manual_calendar_sync',
-            channelId: null,
-            guildId: null,
-            messageId: null,
-            calendarLink: eventData.calendarEvent.htmlLink,
-            calendarEventId: eventData.calendarEvent.id,
-            calendarSource: eventData.calendarSource,
-            calendarSourceId: eventData.calendarSourceId
+        if (guildConfigs.length > 0) {
+          // Create one copy of the event per guild that has a channel set
+          for (const guildConfig of guildConfigs) {
+            // Make calendarSourceId unique per guild to prevent cross-guild duplicates
+            const sourceIdForGuild = `${eventData.calendarSourceId}_${guildConfig.guildId}`;
+
+            const exists = await Event.findOne({
+              where: { calendarSourceId: sourceIdForGuild }
+            });
+
+            if (!exists) {
+              const eventId = `gcal_${Date.now()}_${Math.random().toString(36).substr(2, 9)}_${guildConfig.guildId}`;
+
+              await Event.create({
+                id: eventId,
+                title: eventData.calendarEvent.summary || 'Untitled Event',
+                description: eventData.calendarEvent.description || '',
+                dateTime: new Date(eventData.calendarEvent.start.dateTime),
+                duration: eventData.duration,
+                maxParticipants: 0,
+                roles: [],
+                signups: {},
+                createdBy: 'manual_calendar_sync',
+                // ✅ FIX: stamp guild/channel so webEventPoster can post it
+                channelId: guildConfig.eventChannelId,
+                guildId: guildConfig.guildId,
+                messageId: null,
+                calendarLink: eventData.calendarEvent.htmlLink,
+                calendarEventId: eventData.calendarEvent.id,
+                calendarSource: eventData.calendarSource,
+                calendarSourceId: sourceIdForGuild
+              });
+
+              importedCount++;
+              console.log(`[Manual Sync] Created event "${eventData.calendarEvent.summary}" for guild ${guildConfig.guildId}`);
+            }
+          }
+        } else {
+          // No guilds configured — create a guild-less event visible in the web UI only
+          const exists = await Event.findOne({
+            where: { calendarSourceId: eventData.calendarSourceId }
           });
-          
-          importedCount++;
+
+          if (!exists) {
+            const eventId = `gcal_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+
+            await Event.create({
+              id: eventId,
+              title: eventData.calendarEvent.summary || 'Untitled Event',
+              description: eventData.calendarEvent.description || '',
+              dateTime: new Date(eventData.calendarEvent.start.dateTime),
+              duration: eventData.duration,
+              maxParticipants: 0,
+              roles: [],
+              signups: {},
+              createdBy: 'manual_calendar_sync',
+              channelId: null,
+              guildId: null,
+              messageId: null,
+              calendarLink: eventData.calendarEvent.htmlLink,
+              calendarEventId: eventData.calendarEvent.id,
+              calendarSource: eventData.calendarSource,
+              calendarSourceId: eventData.calendarSourceId
+            });
+
+            importedCount++;
+          }
         }
       } catch (error) {
         console.error('[Manual Sync] Error importing event:', error.message);

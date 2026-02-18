@@ -99,13 +99,23 @@ async function getCalendarsFromDatabase() {
  */
 async function createCalendarService() {
   const calendars = await getCalendarsFromDatabase();
-  
+
   if (calendars.length === 0) {
     console.log('[Calendar] No calendars found in database');
     return null;
   }
-  
-  return new CalendarService(config.google.credentials, calendars);
+
+  // Resolve credentials path: env var > default file location
+  const credentialsPath = config.google?.credentials ||
+    path.resolve(__dirname, 'data/calendar-credentials.json');
+
+  if (!require('fs').existsSync(credentialsPath)) {
+    console.log('[Calendar] No credentials file found at:', credentialsPath);
+    return null;
+  }
+
+  console.log('[Calendar] Using service account credentials:', credentialsPath);
+  return new CalendarService(credentialsPath, calendars);
 }
 
 /**
@@ -148,8 +158,8 @@ async function backgroundCalendarSync() {
         // Create one event per guild with event channel configured
         if (guildConfigs.length > 0) {
           for (const guildConfig of guildConfigs) {
-            // Make event ID unique per guild
-            const eventId = `gcal_${Date.now()}_${Math.random().toString(36).substr(2, 9)}_${guildConfig.guildId}`;
+            // Make event ID unique per guild — avoid Date.now() inside inner loop (can collide across guilds)
+            const eventId = `gcal_${Math.random().toString(36).substr(2, 12)}_${guildConfig.guildId}`;
             
             // Make calendarSourceId unique per guild to prevent duplicates
             const sourceIdForGuild = `${eventData.calendarSourceId}_${guildConfig.guildId}`;
@@ -164,7 +174,7 @@ async function backgroundCalendarSync() {
                 id: eventId,
                 title: eventData.calendarEvent.summary || 'Untitled Event',
                 description: eventData.calendarEvent.description || '',
-                dateTime: new Date(eventData.calendarEvent.start.dateTime),
+                dateTime: new Date(eventData.calendarEvent.start.dateTime || eventData.calendarEvent.start.date),
                 duration: eventData.duration,
                 maxParticipants: 0,
                 roles: [],
@@ -377,50 +387,45 @@ async function stopAutoSync() {
 async function syncFromCalendar(channelId, guildId, calendarFilter = null) {
   // Create calendar service with current database calendars
   const calendarService = await createCalendarService();
-  
+
   if (!calendarService) {
     console.log('[AutoSync] No calendars configured');
     return { success: false, message: 'No calendars configured', events: [] };
   }
-  
+
   const result = await calendarService.syncEvents(168, calendarFilter);
-  let postedCount = 0;
-  
+
+  // IMPORT TO DB ONLY — webEventPoster is the single source of posting.
+  // Previously this function also posted directly to Discord, which raced with
+  // backgroundCalendarSync + webEventPoster and caused every event to be posted twice.
   if (result.success && result.events.length > 0) {
-    const channel = await client.channels.fetch(channelId);
     const { Event } = require('./models');
-    
+    let importedCount = 0;
+
     for (const eventData of result.events) {
       try {
-        // Make calendarSourceId unique per guild
         const sourceIdForGuild = `${eventData.calendarSourceId}_${guildId}`;
-        
-        // Check if event exists for THIS guild specifically
+
         const exists = await Event.findOne({
-          where: { 
-            calendarSourceId: sourceIdForGuild,
-            guildId: guildId
-          }
+          where: { calendarSourceId: sourceIdForGuild }
         });
-        
-        if (exists && exists.messageId && exists.channelId === channelId) {
-          // Already posted to this channel
+
+        if (exists) {
+          // Already in DB — do not touch messageId so webEventPoster status is preserved
           continue;
         }
-        
-        // Make event ID unique per guild
-        const eventId = exists?.id || `gcal_${Date.now()}_${Math.random().toString(36).substr(2, 9)}_${guildId}`;
-        
-        // Create or update event
-        const [event] = await Event.upsert({
+
+        const eventId = `gcal_${Math.random().toString(36).substr(2, 12)}_${guildId}`;
+
+        await Event.create({
           id: eventId,
           title: eventData.calendarEvent.summary || 'Untitled Event',
           description: eventData.calendarEvent.description || '',
-          dateTime: new Date(eventData.calendarEvent.start.dateTime),
+          dateTime: new Date(eventData.calendarEvent.start.dateTime || eventData.calendarEvent.start.date),
           duration: eventData.duration,
           maxParticipants: 0,
           roles: [],
-          signups: exists?.signups || {},
+          signups: {},
           createdBy: 'calendar_autosync',
           calendarLink: eventData.calendarEvent.htmlLink,
           calendarEventId: eventData.calendarEvent.id,
@@ -428,47 +433,22 @@ async function syncFromCalendar(channelId, guildId, calendarFilter = null) {
           calendarSourceId: sourceIdForGuild,
           channelId: channelId,
           guildId: guildId,
-          messageId: null // Will be set after posting
+          messageId: null // webEventPoster will set this when it posts
         });
-        
-        // Post to Discord
-        const eventEmbed = EmbedBuilder.createEventEmbed(event.toJSON());
-        const buttons = ButtonBuilder.createSignupButtons(event.toJSON());
-        
-        const sentMessage = await channel.send({ 
-          embeds: [eventEmbed],
-          components: buttons || []
-        });
-        
-        await event.update({ messageId: sentMessage.id });
-        
-        // ✅ FIX: Track this posting to prevent duplicates (with error handling)
-        try {
-          await eventTracker.markAsPosted(
-            event.id,
-            sentMessage.id,
-            channelId,
-            guildId
-          );
-        } catch (trackErr) {
-          console.error('[AutoSync] Warning: Failed to track event:', trackErr.message);
-          // Non-fatal - continue processing
-        }
-        
-        postedCount++;
-        
+
+        importedCount++;
       } catch (error) {
-        console.error('[AutoSync] Error processing event:', error.message);
+        console.error('[AutoSync] Error importing event:', error.message);
       }
     }
-    
-    if (postedCount > 0) {
-      console.log(`[AutoSync] ✅ Posted ${postedCount} new events (filtered from ${result.events.length} calendar events)`);
+
+    if (importedCount > 0) {
+      console.log(`[AutoSync] ✅ Imported ${importedCount} new event(s) — webEventPoster will post them shortly`);
     } else {
-      console.log(`[AutoSync] ℹ️  No new events to post (checked ${result.events.length} calendar events)`);
+      console.log(`[AutoSync] ℹ️  No new events to import (checked ${result.events.length} calendar events)`);
     }
   }
-  
+
   return result;
 }
 
@@ -776,7 +756,7 @@ async function registerCommands(clientId) {
 }
 
 // Bot ready event
-client.once('Ready', async () => {
+client.once('ready', async () => {
   console.log('\n╔═══════════════════════════════════════════════════════╗');
   console.log(`║ 🤖 ${client.user.tag} is online!`);
   console.log('╠═══════════════════════════════════════════════════════╣');
