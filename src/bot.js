@@ -776,7 +776,7 @@ async function registerCommands(clientId) {
 }
 
 // Bot ready event
-client.once('clientReady', async () => {
+client.once('Ready', async () => {
   console.log('\n╔═══════════════════════════════════════════════════════╗');
   console.log(`║ 🤖 ${client.user.tag} is online!`);
   console.log('╠═══════════════════════════════════════════════════════╣');

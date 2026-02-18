@@ -160,7 +160,6 @@ async function main() {
     console.log(colors.bright + '📊 Summary' + colors.reset);
     console.log('');
 
-    const { Op } = require('sequelize');
     const totalEvents = await Event.count();
     const calendarEvents = await Event.count({
       where: { calendarSourceId: { [Op.not]: null } }

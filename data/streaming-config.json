@@ -1,12 +1,12 @@
 {
   "1460761916619227361": {
-    "notificationChannelId": "1470242094248493249",
-    "guildName": "sgtepsilon's server",
+    "notificationChannelId": "",
+    "guildName": "",
     "twitch": {
       "enabled": true,
       "streamers": {
         "streamers": [
-          "rogue_mando_gaming"
+          ""
         ],
         "enabled": true
       },
