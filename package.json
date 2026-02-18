@@ -1,42 +1,56 @@
 {
-  "name": "discord-event-bot-modular",
-  "version": "4.0.0",
-  "description": "Modular Discord bot for managing events with Google Calendar integration, Twitch/YouTube monitoring, custom signup roles, and web interface",
-  "main": "src/bot.js",
+  "name": "discord-event-bot",
+  "version": "1.0.0",
+  "description": "Discord bot for event management with Google Calendar integration",
+  "main": "index.js",
   "scripts": {
     "start": "node src/bot.js",
+    "dev": "nodemon src/bot.js",
     "web": "node web-server.js",
     "start:all": "node start-all.js",
-    "dev": "nodemon src/bot.js",
-    "dev:web": "nodemon web-server.js",
-    "dev:all": "concurrently \"nodemon src/bot.js\" \"nodemon web-server.js\""
+    "pm2:start": "node pm2-start-custom.js",
+    "pm2:stop": "pm2 stop all",
+    "pm2:restart": "pm2 restart all",
+    "pm2:logs": "pm2 logs",
+    "pm2:status": "pm2 status",
+    "pm2:monitor": "node pm2-monitor.js",
+    "pm2:delete": "pm2 delete all",
+    "diagnostic": "node diagnostic.js",
+    "calendar:diagnostic": "node diagnostics/calendar-diagnostic.js",
+    "calendar:debug": "node diagnostics/calendar-sync-debugger.js",
+    "calendar:fix": "node diagnostics/fix-calendar-sync.js",
+    "calendar:test": "node diagnostics/test-calendar-connection.js",
+    "health": "node diagnostics/health-check.js",
+    "diag:setup": "node diagnostics/setup-diagnostic.js",
+    "diag:database": "node diagnostics/database-diagnostic.js",
+    "diag:discord": "node diagnostics/discord-diagnostic.js",
+    "diag:web": "node diagnostics/webserver-diagnostic.js",
+    "diag:all": "node diagnostics/health-check.js"
   },
   "keywords": [
     "discord",
     "bot",
     "events",
     "calendar",
-    "google-calendar",
-    "twitch",
-    "youtube",
-    "streaming",
-    "notifications",
-    "web-interface",
-    "modular"
+    "google-calendar"
   ],
   "author": "",
   "license": "MIT",
   "dependencies": {
+    "archiver": "^7.0.1",
+    "axios": "^1.6.5",
     "discord.js": "^14.14.1",
-    "googleapis": "^130.0.0",
     "dotenv": "^16.3.1",
     "express": "^4.18.2",
-    "cors": "^2.8.5",
-    "axios": "^1.6.2",
+    "googleapis": "^131.0.0",
+    "node-ical": "^0.18.0",
+    "sequelize": "^6.35.2",
+    "sqlite3": "^5.1.7",
+    "uuid": "^9.0.1",
     "xml2js": "^0.6.2"
   },
   "devDependencies": {
-    "nodemon": "^3.0.2",
-    "concurrently": "^8.2.2"
+    "concurrently": "^9.2.1",
+    "nodemon": "^3.0.2"
   }
 }

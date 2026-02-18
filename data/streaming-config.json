@@ -1,0 +1,23 @@
+{
+  "1460761916619227361": {
+    "notificationChannelId": "",
+    "guildName": "",
+    "twitch": {
+      "enabled": true,
+      "streamers": {
+        "streamers": [
+          ""
+        ],
+        "enabled": true
+      },
+      "message": "🔴 {username} is live!"
+    },
+    "youtube": {
+      "enabled": false,
+      "channels": [],
+      "message": "📺 {channel} uploaded!"
+    },
+    "createdAt": "2026-02-08T21:26:51.961Z",
+    "updatedAt": "2026-02-09T05:05:50.096Z"
+  }
+}

@@ -1,260 +1,241 @@
 // src/services/eventManager.js
-const Storage = require('../utils/storage');
-const { parseDateTime, isUpcoming } = require('../utils/datetime');
+const { Event } = require('../models');
+const { Op } = require('sequelize');
+const { GoogleCalendarService } = require('./googleCalendar');
 
 class EventManager {
-    constructor(filePath, calendarService) {
-        this.storage = new Storage(filePath);
-        this.calendarService = calendarService;
+  constructor(eventsFilePath = null, calendarService = null) {
+    this.eventsFilePath = eventsFilePath;
+    try {
+      this.googleCalendar = calendarService || new GoogleCalendarService();
+    } catch (err) {
+      console.warn('⚠️  GoogleCalendarService unavailable:', err.message);
+      this.googleCalendar = null;
     }
-    
-    /**
-     * Create a new event
-     */
-    async createEvent(eventData) {
-        const eventId = `event_${Date.now()}`;
-        
-        const event = {
-            id: eventId,
-            title: eventData.title,
-            description: eventData.description || '',
-            dateTime: eventData.dateTime,
-            duration: eventData.duration || 60,
-            maxParticipants: eventData.maxParticipants || 0,
-            roles: eventData.roles || [],
-            signups: {},
-            createdBy: eventData.createdBy || 'unknown',
-            channelId: eventData.channelId || null,
-            guildId: eventData.guildId || null,
-            messageId: eventData.messageId || null,
-            calendarLink: null,
-            calendarEventId: null,
-            calendarSource: null,
-            calendarSourceId: null
-        };
-        
-        // Initialize signups for each role
-        event.roles.forEach(role => {
-            event.signups[role.name] = [];
+  }
+
+  async createEvent(eventData) {
+    const event = await Event.create({
+      id: eventData.id,
+      title: eventData.title,
+      description: eventData.description || '',
+      dateTime: new Date(eventData.dateTime),
+      duration: eventData.duration || 60,
+      maxParticipants: eventData.maxParticipants || 0,
+      roles: eventData.roles || [],
+      signups: {},
+      createdBy: eventData.createdBy || 'unknown',
+      channelId: eventData.channelId,
+      guildId: eventData.guildId,
+      messageId: eventData.messageId
+    });
+
+    // Add to Google Calendar if specified
+    if (eventData.addToCalendar && eventData.calendarId && this.googleCalendar) {
+      try {
+        const calendarResult = await this.googleCalendar.createEvent(eventData.calendarId, {
+          title: eventData.title,
+          description: eventData.description,
+          dateTime: eventData.dateTime,
+          duration: eventData.duration
         });
-        
-        // Try to create in Google Calendar
-        if (this.calendarService && this.calendarService.isEnabled()) {
-            const calendarLink = await this.calendarService.createEvent(event);
-            if (calendarLink) {
-                event.calendarLink = calendarLink;
-            }
-        }
-        
-        this.storage.set(eventId, event);
-        return event;
-    }
-    
-    /**
-     * Create event from preset
-     */
-    async createFromPreset(preset, dateTime, customDescription = null) {
-        const parsedDateTime = parseDateTime(dateTime);
-        
-        if (!parsedDateTime) {
-            throw new Error('Invalid date format');
-        }
-        
-        const eventData = {
-            title: preset.name,
-            description: customDescription || preset.description,
-            dateTime: parsedDateTime.toISOString(),
-            duration: preset.duration,
-            maxParticipants: preset.maxParticipants,
-            roles: JSON.parse(JSON.stringify(preset.roles)) // Deep copy
-        };
-        
-        return await this.createEvent(eventData);
-    }
-    
-    /**
-     * Get event by ID
-     */
-    getEvent(eventId) {
-        return this.storage.get(eventId);
-    }
-    
-    /**
-     * Get all events
-     */
-    getAllEvents() {
-        return this.storage.getAllAsObject();
-    }
-    
-    /**
-     * Get events for a specific guild
-     */
-    getGuildEvents(guildId) {
-        const allEvents = this.storage.getAllAsObject();
-        return Object.values(allEvents).filter(e => e.guildId === guildId);
-    }
-    
-    /**
-     * Get upcoming events
-     */
-    getUpcomingEvents(guildId = null) {
-        const events = guildId ? this.getGuildEvents(guildId) : this.storage.getAll();
-        return events.filter(e => isUpcoming(e.dateTime));
-    }
-    
-    /**
-     * Update event
-     */
-    updateEvent(eventId, updates) {
-        const event = this.getEvent(eventId);
-        if (!event) {
-            throw new Error('Event not found');
-        }
-        
-        const updatedEvent = { ...event, ...updates };
-        this.storage.set(eventId, updatedEvent);
-        return updatedEvent;
-    }
-    
-    /**
-     * Delete event
-     */
-    deleteEvent(eventId) {
-        return this.storage.delete(eventId);
-    }
-    
-    /**
-     * Add role to event
-     */
-    addRole(eventId, role) {
-        const event = this.getEvent(eventId);
-        if (!event) {
-            throw new Error('Event not found');
-        }
-        
-        if (!event.roles) event.roles = [];
-        if (!event.signups) event.signups = {};
-        
-        event.roles.push(role);
-        event.signups[role.name] = [];
-        
-        this.storage.set(eventId, event);
-        return event;
-    }
-    
-    /**
-     * Sign up user for role
-     */
-    signupUser(eventId, userId, roleName) {
-        const event = this.getEvent(eventId);
-        if (!event) {
-            throw new Error('Event not found');
-        }
-        
-        const role = event.roles.find(r => r.name === roleName);
-        if (!role) {
-            throw new Error('Role not found');
-        }
-        
-        // Check if role is full
-        if (role.maxSlots && event.signups[roleName]?.length >= role.maxSlots) {
-            throw new Error('Role is full');
-        }
-        
-        // Remove user from all other roles
-        Object.keys(event.signups).forEach(r => {
-            event.signups[r] = event.signups[r].filter(id => id !== userId);
+
+        await event.update({
+          calendarEventId: calendarResult.eventId,
+          calendarLink: calendarResult.htmlLink,
+          calendarSource: eventData.calendarId
         });
-        
-        // Add user to new role
-        if (!event.signups[roleName]) event.signups[roleName] = [];
-        event.signups[roleName].push(userId);
-        
-        this.storage.set(eventId, event);
-        return event;
+      } catch (error) {
+        console.error('Failed to add event to Google Calendar:', error.message);
+        // Don't fail the event creation, just log the error
+      }
     }
+
+    return event.toJSON();
+  }
+
+  async getEvent(eventId) {
+    const event = await Event.findByPk(eventId);
+    if (!event) {
+      return null;
+    }
+    return event.toJSON();
+  }
+
+  async getAllEvents() {
+    const events = await Event.findAll({
+      order: [['dateTime', 'ASC']]
+    });
+    return events.map(event => event.toJSON());
+  }
+
+  async getGuildEvents(guildId) {
+    const events = await Event.findAll({
+      where: { guildId },
+      order: [['dateTime', 'ASC']]
+    });
+    return events.map(event => event.toJSON());
+  }
+
+  async getUpcomingEvents(guildId = null, limit = 10) {
+    const where = {
+      dateTime: {
+        [Op.gte]: new Date()
+      }
+    };
+
+    if (guildId) {
+      where.guildId = guildId;
+    }
+
+    const events = await Event.findAll({
+      where,
+      order: [['dateTime', 'ASC']],
+      limit
+    });
     
-    /**
-     * Remove user from event
-     */
-    removeUser(eventId, userId) {
-        const event = this.getEvent(eventId);
-        if (!event) {
-            throw new Error('Event not found');
-        }
-        
-        let removed = false;
-        Object.keys(event.signups).forEach(r => {
-            const initialLength = event.signups[r].length;
-            event.signups[r] = event.signups[r].filter(id => id !== userId);
-            if (event.signups[r].length < initialLength) removed = true;
+    return events.map(event => event.toJSON());
+  }
+
+  async updateEvent(eventId, updates) {
+    const event = await Event.findByPk(eventId);
+    if (!event) {
+      throw new Error('Event not found');
+    }
+
+    await event.update(updates);
+
+    // Update Google Calendar event if it exists
+    if (event.calendarEventId && event.calendarSource && this.googleCalendar) {
+      try {
+        await this.googleCalendar.updateEvent(event.calendarSource, event.calendarEventId, {
+          title: event.title,
+          description: event.description,
+          dateTime: event.dateTime,
+          duration: event.duration
         });
-        
-        if (removed) {
-            this.storage.set(eventId, event);
-        }
-        
-        return { event, removed };
+      } catch (error) {
+        console.error('Failed to update Google Calendar event:', error.message);
+      }
+    }
+
+    return event.toJSON();
+  }
+
+  async deleteEvent(eventId) {
+    const event = await Event.findByPk(eventId);
+    if (!event) {
+      return false;
+    }
+
+    // Delete from Google Calendar if it exists
+    if (event.calendarEventId && event.calendarSource && this.googleCalendar) {
+      try {
+        await this.googleCalendar.deleteEvent(event.calendarSource, event.calendarEventId);
+      } catch (error) {
+        console.error('Failed to delete Google Calendar event:', error.message);
+      }
+    }
+
+    await event.destroy();
+    return true;
+  }
+
+  async signupUser(eventId, userId, role = null) {
+    const event = await Event.findByPk(eventId);
+    if (!event) {
+      throw new Error('Event not found');
+    }
+
+    const signups = event.signups || {};
+    
+    // Check if user is already signed up
+    if (signups[userId]) {
+      throw new Error('User already signed up for this event');
+    }
+
+    // Check max participants limit
+    const currentSignups = Object.keys(signups).length;
+    if (event.maxParticipants > 0 && currentSignups >= event.maxParticipants) {
+      throw new Error('Event is full');
+    }
+
+    // Add user signup
+    signups[userId] = {
+      role: role,
+      signedUpAt: new Date().toISOString()
+    };
+
+    await event.update({ signups });
+    return event.toJSON();
+  }
+
+  async removeUser(eventId, userId) {
+    const event = await Event.findByPk(eventId);
+    if (!event) {
+      throw new Error('Event not found');
+    }
+
+    const signups = event.signups || {};
+    let removed = false;
+
+    // Handle role-based signups: { roleName: [userId1, userId2] }
+    for (const [key, val] of Object.entries(signups)) {
+      if (Array.isArray(val) && val.includes(userId)) {
+        signups[key] = val.filter(id => id !== userId);
+        removed = true;
+      }
+    }
+
+    // Handle user-keyed signups: { userId: { role, signedUpAt } }
+    if (!removed && signups[userId]) {
+      delete signups[userId];
+      removed = true;
+    }
+
+    if (removed) {
+      await event.update({ signups });
+    }
+
+    return { removed, event: event.toJSON() };
+  }
+
+  async importCalendarEvent(calendarId, calendarEventId, additionalData = {}) {
+    try {
+      // Fetch event from Google Calendar
+      const calendarEvent = await this.googleCalendar.getEvent(calendarId, calendarEventId);
+      
+      // Create event in database
+      const eventData = {
+        id: additionalData.id || `gcal_${calendarEventId}`,
+        title: calendarEvent.summary,
+        description: calendarEvent.description || '',
+        dateTime: new Date(calendarEvent.start.dateTime || calendarEvent.start.date),
+        duration: calendarEvent.duration || 60,
+        calendarEventId: calendarEventId,
+        calendarLink: calendarEvent.htmlLink,
+        calendarSource: calendarId,
+        ...additionalData
+      };
+
+      const event = await this.createEvent(eventData);
+      return event;
+    } catch (error) {
+      console.error('Failed to import calendar event:', error.message);
+      throw error;
+    }
+  }
+
+  toJSON(event) {
+    if (!event) return null;
+    
+    // If it's already a plain object, return it
+    if (typeof event.toJSON === 'function') {
+      return event.toJSON();
     }
     
-    /**
-     * Import event from Google Calendar
-     */
-    importCalendarEvent(calendarData, channelId, guildId) {
-        const { calendarEvent, calendarSource, calendarSourceId, duration } = calendarData;
-        
-        // Check if already imported
-        const allEvents = this.storage.getAllAsObject();
-        const existing = Object.values(allEvents).find(e => 
-            e.calendarEventId === calendarEvent.id ||
-            e.calendarSourceId === calendarSourceId
-        );
-        
-        if (existing) {
-            return null; // Already imported
-        }
-        
-        const eventId = `event_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-        const event = {
-            id: eventId,
-            title: calendarEvent.summary || 'Imported Event',
-            description: calendarEvent.description || `Imported from ${calendarSource}`,
-            dateTime: new Date(calendarEvent.start.dateTime).toISOString(),
-            duration: duration,
-            maxParticipants: 0,
-            roles: [],
-            signups: {},
-            createdBy: 'google_calendar',
-            channelId: channelId,
-            guildId: guildId,
-            messageId: null,
-            calendarEventId: calendarEvent.id,
-            calendarSourceId: calendarSourceId,
-            calendarSource: calendarSource,
-            calendarLink: calendarEvent.htmlLink
-        };
-        
-        this.storage.set(eventId, event);
-        return event;
-    }
-    
-    /**
-     * Get statistics
-     */
-    getStats(guildId = null) {
-        const events = guildId ? this.getGuildEvents(guildId) : this.storage.getAll();
-        
-        const totalSignups = events.reduce((sum, event) => {
-            return sum + Object.values(event.signups || {}).reduce((s, arr) => s + arr.length, 0);
-        }, 0);
-        
-        return {
-            totalEvents: events.length,
-            upcomingEvents: events.filter(e => isUpcoming(e.dateTime)).length,
-            totalSignups: totalSignups,
-            eventsWithCalendar: events.filter(e => e.calendarLink).length
-        };
-    }
+    return event;
+  }
 }
 
 module.exports = EventManager;
