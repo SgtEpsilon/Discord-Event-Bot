@@ -1,19 +1,15 @@
 {
   "1460761916619227361": {
-    "notificationChannelId": "1470242094248493249",
+    "notificationChannelId": null,
     "twitch": {
-      "enabled": true,
-      "streamers": [
-        "rogue_mando_gaming"
-      ],
+      "enabled": false,
+      "streamers": [],
       "message": "🔴 {username} is now live on Twitch!\n**{title}**\nPlaying: {game}",
       "customMessages": {}
     },
     "youtube": {
-      "enabled": true,
-      "channels": [
-        "@roguemandogaming"
-      ],
+      "enabled": false,
+      "channels": [],
       "message": "📺 {channel} just uploaded a new video!\n**{title}**"
     }
   }

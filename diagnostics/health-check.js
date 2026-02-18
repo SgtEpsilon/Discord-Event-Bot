@@ -7,6 +7,8 @@ const execAsync = promisify(exec);
 const fs = require('fs');
 const path = require('path');
 
+const PROJECT_ROOT = path.join(__dirname, '..');
+
 const colors = {
   reset: '\x1b[0m',
   bright: '\x1b[1m',
@@ -30,24 +32,26 @@ async function runDiagnostic(name, script) {
   console.log('');
   
   try {
-    const { stdout, stderr } = await execAsync(`node ${script}`, {
-      cwd: process.cwd(),
+    const { stdout, stderr } = await execAsync(`node "${script}"`, {
+      cwd: PROJECT_ROOT,
       timeout: 60000
     });
     
     console.log(stdout);
-    if (stderr && !stderr.includes('DeprecationWarning')) {
+    if (stderr && !stderr.includes('DeprecationWarning') && !stderr.includes('ExperimentalWarning')) {
       console.log(colors.yellow + stderr + colors.reset);
     }
     
     return { success: true };
   } catch (err) {
-    // Exit code 1 means issues found
+    // Exit code 1 means issues were found (not a crash)
     if (err.code === 1 && err.stdout) {
       console.log(err.stdout);
       return { success: false, hasIssues: true };
     }
     
+    // Actual error running the script
+    if (err.stdout) console.log(err.stdout);
     console.log(colors.red + `Failed to run ${name}: ${err.message}` + colors.reset);
     console.log('');
     return { success: false, error: err.message };
@@ -67,11 +71,11 @@ async function main() {
   console.log('');
   
   const diagnostics = [
-    { name: 'Setup', script: 'diagnostics/setup-diagnostic.js', critical: true },
-    { name: 'Database', script: 'diagnostics/database-diagnostic.js', critical: true },
-    { name: 'Discord Connection', script: 'diagnostics/discord-diagnostic.js', critical: true },
-    { name: 'Web Server', script: 'diagnostics/webserver-diagnostic.js', critical: false },
-    { name: 'Calendar Sync', script: 'diagnostics/calendar-sync-debugger.js', critical: false }
+    { name: 'Setup',             script: path.join(__dirname, 'setup-diagnostic.js'),        critical: true  },
+    { name: 'Database',          script: path.join(__dirname, 'database-diagnostic.js'),      critical: true  },
+    { name: 'Discord Connection',script: path.join(__dirname, 'discord-diagnostic.js'),       critical: true  },
+    { name: 'Web Server',        script: path.join(__dirname, 'webserver-diagnostic.js'),     critical: false },
+    { name: 'Calendar Sync',     script: path.join(__dirname, 'calendar-sync-debugger.js'),   critical: false }
   ];
   
   const results = {};
@@ -79,54 +83,46 @@ async function main() {
   for (const diag of diagnostics) {
     section(diag.name);
     
-    const scriptPath = path.join(process.cwd(), diag.script);
-    
-    if (!fs.existsSync(scriptPath)) {
-      console.log(colors.yellow + `⚠️  ${diag.script} not found, skipping...` + colors.reset);
+    if (!fs.existsSync(diag.script)) {
+      console.log(colors.yellow + `⚠️  ${path.basename(diag.script)} not found, skipping...` + colors.reset);
       console.log('');
-      results[diag.name] = { skipped: true };
+      results[diag.name] = { ...diag, skipped: true };
       continue;
     }
     
     const result = await runDiagnostic(diag.name, diag.script);
     results[diag.name] = { ...diag, ...result };
     
-    // Add delay between diagnostics
     await new Promise(resolve => setTimeout(resolve, 1000));
   }
   
   // Final Summary
   section('OVERALL HEALTH SUMMARY');
   
-  const critical = Object.values(results).filter(r => r.critical && !r.success && !r.skipped);
-  const warnings = Object.values(results).filter(r => !r.critical && r.hasIssues && !r.skipped);
-  const passed = Object.values(results).filter(r => r.success && !r.skipped);
-  const skipped = Object.values(results).filter(r => r.skipped);
+  const allResults   = Object.values(results);
+  const passed       = allResults.filter(r => r.success && !r.skipped);
+  const criticalFail = allResults.filter(r => r.critical && !r.success && !r.skipped);
+  const warnings     = allResults.filter(r => !r.critical && r.hasIssues && !r.skipped);
+  const skipped      = allResults.filter(r => r.skipped);
   
   console.log(colors.bright + 'Results:' + colors.reset);
   console.log('');
   
   if (passed.length > 0) {
     console.log(colors.green + `✅ Passed: ${passed.length}` + colors.reset);
-    passed.forEach(r => {
-      console.log(`   • ${r.name || 'Unknown'}`);
-    });
+    passed.forEach(r => console.log(`   • ${r.name}`));
     console.log('');
   }
   
   if (warnings.length > 0) {
     console.log(colors.yellow + `⚠️  Warnings: ${warnings.length}` + colors.reset);
-    warnings.forEach(r => {
-      console.log(`   • ${r.name || 'Unknown'} has non-critical issues`);
-    });
+    warnings.forEach(r => console.log(`   • ${r.name} has non-critical issues`));
     console.log('');
   }
   
-  if (critical.length > 0) {
-    console.log(colors.red + `❌ Critical Issues: ${critical.length}` + colors.reset);
-    critical.forEach(r => {
-      console.log(`   • ${r.name || 'Unknown'} has critical issues`);
-    });
+  if (criticalFail.length > 0) {
+    console.log(colors.red + `❌ Critical Issues: ${criticalFail.length}` + colors.reset);
+    criticalFail.forEach(r => console.log(`   • ${r.name} has critical issues`));
     console.log('');
   }
   
@@ -138,33 +134,22 @@ async function main() {
   console.log(colors.cyan + '─────────────────────────────────────────────────────' + colors.reset);
   console.log('');
   
-  if (critical.length === 0 && warnings.length === 0) {
+  if (criticalFail.length === 0 && warnings.length === 0) {
     console.log(colors.green + colors.bright + '🎉 ALL SYSTEMS HEALTHY! 🎉' + colors.reset);
     console.log('');
     console.log('Your bot is ready to use!');
     console.log('');
-    console.log(colors.bright + 'Quick Start:' + colors.reset);
-    console.log('');
-    console.log('1. Bot Status:');
-    console.log(colors.cyan + '   pm2 status' + colors.reset);
-    console.log('');
-    console.log('2. View Logs:');
-    console.log(colors.cyan + '   pm2 logs discord-event-bot' + colors.reset);
-    console.log('');
-    console.log('3. Web UI:');
-    require('dotenv').config();
+    require('dotenv').config({ path: path.join(PROJECT_ROOT, '.env') });
     const port = process.env.WEB_PORT || 3000;
-    console.log(colors.cyan + `   http://localhost:${port}` + colors.reset);
+    console.log('1. Bot Status:  ' + colors.cyan + 'pm2 status' + colors.reset);
+    console.log('2. View Logs:   ' + colors.cyan + 'pm2 logs discord-event-bot' + colors.reset);
+    console.log('3. Web UI:      ' + colors.cyan + `http://localhost:${port}` + colors.reset);
+    console.log('4. Discord:     ' + colors.cyan + '/create  /list  /eventinfo' + colors.reset);
     console.log('');
-    console.log('4. Discord:');
-    console.log('   Use slash commands in your server:');
-    console.log(colors.cyan + '   /event action:create' + colors.reset);
-    console.log('');
-  } else if (critical.length === 0) {
+  } else if (criticalFail.length === 0) {
     console.log(colors.yellow + '⚠️  System has warnings but is functional' + colors.reset);
     console.log('');
-    console.log('The bot should work, but review the warnings above');
-    console.log('to ensure optimal performance.');
+    console.log('The bot should work — review the warnings above for optimal performance.');
     console.log('');
   } else {
     console.log(colors.red + '❌ Critical issues detected' + colors.reset);
@@ -172,22 +157,16 @@ async function main() {
     console.log('Fix the critical issues listed above before running the bot.');
     console.log('');
     console.log('Run individual diagnostics for detailed fixes:');
-    console.log('');
-    critical.forEach(r => {
-      console.log(`  node ${r.script}`);
-    });
+    criticalFail.forEach(r => console.log(`  node "${r.script}"`));
     console.log('');
   }
   
   console.log(colors.cyan + '═══════════════════════════════════════════════════════' + colors.reset);
   console.log('');
-  
-  console.log(colors.dim + 'Need help? Check the troubleshooting docs:' + colors.reset);
-  console.log(colors.dim + '  • TROUBLESHOOTING_GUIDE.md' + colors.reset);
-  console.log(colors.dim + '  • Or run specific diagnostics for detailed guidance' + colors.reset);
+  console.log(colors.dim + 'Need help? Check: diagnostics/TROUBLESHOOTING_GUIDE.md' + colors.reset);
   console.log('');
   
-  process.exit(critical.length > 0 ? 1 : 0);
+  process.exit(criticalFail.length > 0 ? 1 : 0);
 }
 
 main().catch(err => {

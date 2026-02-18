@@ -1,38 +1,45 @@
-# Environment variables
+# Dependencies
+node_modules/
+package-lock.json
+yarn.lock
+
+# Environment & secrets
 .env
 .env.local
 .env.*.local
 
-# Database
-data/database.sqlite
-data/database.sqlite-shm
-data/database.sqlite-wal
-
-#Packages
-package-lock.json
-
-# Credentials
+# Google Calendar credentials
 data/calendar-credentials.json
 data/*.json
+!data/streaming.json
+
+# SQLite database
+data/*.sqlite
+data/*.sqlite-journal
+data/*.sqlite-shm
+data/*.sqlite-wal
+
+# Backups
+data/backups/
+*.backup
+bot.js.backup
 
 # Logs
 logs/
 *.log
-
-# Dependencies
-node_modules/
+npm-debug.log*
 
 # OS files
 .DS_Store
 Thumbs.db
+desktop.ini
 
-# IDE
+# Editor files
 .vscode/
 .idea/
 *.swp
 *.swo
-*~
 
-# Backups
-data/backup_*
-data/bot-status.json
+# Runtime
+pids/
+*.pid

@@ -1,34 +1,33 @@
 #!/usr/bin/env node
 // test-calendar-connection.js - Direct test of calendar access
 
-require('dotenv').config();
+require('dotenv').config({ path: require('path').join(__dirname, '../.env') });
 
 async function main() {
   console.log('🔍 Testing Calendar Connection\n');
 
-  // Initialize database
-  const { testConnection, initializeDatabase } = require('./src/config/database');
+  const { testConnection, initializeDatabase } = require('../src/config/database');
   await testConnection();
   await initializeDatabase();
 
-  // Get calendars
-  const { CalendarConfig } = require('./src/models');
+  const { CalendarConfig } = require('../src/models');
   const calendars = await CalendarConfig.findAll();
 
   if (calendars.length === 0) {
     console.log('❌ No calendars configured');
+    console.log('   Add calendars via the web UI: http://localhost:' + (process.env.WEB_PORT || 3000));
     process.exit(1);
   }
 
   console.log(`Found ${calendars.length} calendar(s):\n`);
 
+  const CalendarService = require('../src/services/calendar');
+  const { config } = require('../src/config');
+
   for (const cal of calendars) {
     console.log(`━━━ Testing: ${cal.name} ━━━`);
     console.log(`Type: ${cal.calendarId.startsWith('http') ? 'iCal URL' : 'Google Calendar'}`);
     console.log(`ID: ${cal.calendarId.substring(0, 60)}${cal.calendarId.length > 60 ? '...' : ''}\n`);
-
-    const CalendarService = require('./src/services/calendar');
-    const { config } = require('./src/config');
 
     const calendarService = new CalendarService(
       config.google.credentials,
@@ -57,15 +56,12 @@ async function main() {
         result.events.slice(0, 5).forEach((evt, idx) => {
           const summary = evt.calendarEvent.summary || 'Untitled';
           const start = new Date(evt.calendarEvent.start.dateTime);
-          const isAllDay = !evt.calendarEvent.start.dateTime;
+          const hasTime = !!evt.calendarEvent.start.dateTime;
           
           console.log(`  ${idx + 1}. ${summary}`);
           console.log(`     Date: ${start.toLocaleString()}`);
           console.log(`     Duration: ${evt.duration} minutes`);
-          
-          if (isAllDay) {
-            console.log(`     ⚠️  ALL-DAY EVENT (will be skipped)`);
-          }
+          if (!hasTime) console.log('     ⚠️  ALL-DAY EVENT (will be skipped)');
           console.log('');
         });
       } else {

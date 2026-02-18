@@ -17,23 +17,10 @@ const colors = {
 
 let issues = [];
 
-function error(msg) {
-  console.log(colors.red + '❌ ' + msg + colors.reset);
-  issues.push(msg);
-}
-
-function warn(msg) {
-  console.log(colors.yellow + '⚠️  ' + msg + colors.reset);
-}
-
-function success(msg) {
-  console.log(colors.green + '✅ ' + msg + colors.reset);
-}
-
-function info(msg) {
-  console.log(colors.cyan + 'ℹ️  ' + msg + colors.reset);
-}
-
+function error(msg) { console.log(colors.red + '❌ ' + msg + colors.reset); issues.push(msg); }
+function warn(msg)  { console.log(colors.yellow + '⚠️  ' + msg + colors.reset); }
+function success(msg) { console.log(colors.green + '✅ ' + msg + colors.reset); }
+function info(msg)  { console.log(colors.cyan + 'ℹ️  ' + msg + colors.reset); }
 function section(title) {
   console.log('');
   console.log(colors.cyan + colors.bright + '━━━ ' + title + ' ━━━' + colors.reset);
@@ -42,19 +29,7 @@ function section(title) {
 
 function query(db, sql, params = []) {
   return new Promise((resolve, reject) => {
-    db.all(sql, params, (err, rows) => {
-      if (err) reject(err);
-      else resolve(rows);
-    });
-  });
-}
-
-function run(db, sql, params = []) {
-  return new Promise((resolve, reject) => {
-    db.run(sql, params, function(err) {
-      if (err) reject(err);
-      else resolve(this);
-    });
+    db.all(sql, params, (err, rows) => { if (err) reject(err); else resolve(rows); });
   });
 }
 
@@ -65,7 +40,8 @@ async function main() {
   console.log(colors.cyan + colors.bright + '╚════════════════════════════════════════════════════════╝' + colors.reset);
   console.log('');
 
-  const dbPath = path.join(process.cwd(), 'data', 'database.sqlite');
+  // Resolve db path the same way the app does
+  const dbPath = process.env.DB_PATH || path.join(__dirname, '../data/database.sqlite');
 
   // Step 1: Check file exists
   section('1. Database File');
@@ -75,20 +51,19 @@ async function main() {
     console.log('');
     console.log(`   Expected location: ${dbPath}`);
     console.log('');
-    console.log('   Fix: The database will be created automatically when you start the bot');
-    console.log('   Run: npm run pm2:start');
+    console.log('   Fix: The database is created automatically on first bot start');
+    console.log('   Run: npm start (or npm run pm2:start)');
     console.log('');
     process.exit(1);
   }
   
   success('Database file exists');
-  
   const stats = fs.statSync(dbPath);
   console.log(`   Location: ${dbPath}`);
   console.log(`   Size: ${(stats.size / 1024).toFixed(2)} KB`);
   console.log(`   Modified: ${stats.mtime.toLocaleString()}`);
 
-  // Step 2: Check file permissions
+  // Step 2: Permissions
   section('2. File Permissions');
   
   try {
@@ -97,9 +72,8 @@ async function main() {
   } catch (err) {
     error('Database file permission issue');
     console.log('');
-    console.log('   Fix: Ensure file has read/write permissions');
     if (process.platform !== 'win32') {
-      console.log('   Run: chmod 666 ' + dbPath);
+      console.log('   Fix: chmod 666 ' + dbPath);
     }
     console.log('');
   }
@@ -109,27 +83,25 @@ async function main() {
   
   let db;
   try {
-    db = new sqlite3.Database(dbPath, sqlite3.OPEN_READWRITE, (err) => {
-      if (err) throw err;
+    db = await new Promise((resolve, reject) => {
+      const d = new sqlite3.Database(dbPath, sqlite3.OPEN_READWRITE, (err) => {
+        if (err) reject(err); else resolve(d);
+      });
     });
     success('Database opened successfully');
   } catch (err) {
     error('Cannot open database: ' + err.message);
     console.log('');
-    console.log('   Database file may be corrupted');
-    console.log('');
+    console.log('   The database file may be corrupted.');
     console.log('   Fix:');
-    console.log('   1. Backup current database:');
-    console.log('      cp data/database.sqlite data/database.sqlite.backup');
-    console.log('   2. Delete corrupted file:');
-    console.log('      rm data/database.sqlite');
-    console.log('   3. Restart bot to create new database:');
-    console.log('      npm run pm2:start');
+    console.log('   1. cp data/database.sqlite data/database.sqlite.backup');
+    console.log('   2. rm data/database.sqlite');
+    console.log('   3. npm start  (bot recreates it automatically)');
     console.log('');
     process.exit(1);
   }
 
-  // Step 4: Check integrity
+  // Step 4: Integrity check
   section('4. Database Integrity');
   
   try {
@@ -140,27 +112,29 @@ async function main() {
       error('Database integrity check failed: ' + result[0]['integrity_check']);
       console.log('');
       console.log('   Database may be corrupted. See backup instructions in Step 3.');
-      console.log('');
     }
   } catch (err) {
-    error('Integrity check failed: ' + err.message);
+    error('Integrity check error: ' + err.message);
   }
 
   // Step 5: Check tables
   section('5. Database Tables');
   
+  // These are the actual tableName values from the Sequelize models
   const requiredTables = [
     'events',
     'calendar_config',
-    'auto_sync_config',
-    'users'
+    'autosync_config',
+    'Presets',
+    'EventsConfigs',
+    'StreamingConfigs'
   ];
   
   try {
     const tables = await query(db, "SELECT name FROM sqlite_master WHERE type='table'");
     const tableNames = tables.map(t => t.name);
     
-    console.log(`   Found ${tableNames.length} tables`);
+    console.log(`   Found ${tableNames.length} tables: ${tableNames.join(', ')}`);
     console.log('');
     
     let allPresent = true;
@@ -168,7 +142,7 @@ async function main() {
       if (tableNames.includes(table)) {
         console.log(colors.green + `   ✓ ${table}` + colors.reset);
       } else {
-        console.log(colors.red + `   ✗ ${table} (missing)` + colors.reset);
+        console.log(colors.yellow + `   ⚠ ${table} (missing — may not exist yet)` + colors.reset);
         allPresent = false;
       }
     }
@@ -176,86 +150,74 @@ async function main() {
     console.log('');
     
     if (allPresent) {
-      success('All required tables present');
+      success('All expected tables present');
     } else {
-      error('Some tables are missing');
-      console.log('');
-      console.log('   Fix: Run database initialization:');
-      console.log('   1. Stop the bot: pm2 stop discord-event-bot');
-      console.log('   2. Delete database: rm data/database.sqlite');
-      console.log('   3. Start bot: npm run pm2:start');
-      console.log('');
+      warn('Some tables are missing — they are created on first use');
+      console.log('   If the bot has been running, restart it to trigger table creation.');
     }
   } catch (err) {
     error('Cannot read tables: ' + err.message);
   }
 
-  // Step 6: Check table schemas
+  // Step 6: Schema check on core tables
   section('6. Table Schemas');
   
-  try {
-    // Check events table
-    const eventsSchema = await query(db, "PRAGMA table_info(events)");
-    
-    const requiredColumns = {
-      'events': ['id', 'title', 'dateTime', 'description', 'duration', 'calendarSourceId'],
-      'calendar_config': ['id', 'name', 'calendarId'],
-      'auto_sync_config': ['id', 'guildId', 'channelId', 'enabled']
-    };
-    
-    for (const [tableName, columns] of Object.entries(requiredColumns)) {
-      try {
-        const schema = await query(db, `PRAGMA table_info(${tableName})`);
-        const columnNames = schema.map(c => c.name);
-        
-        const missing = columns.filter(col => !columnNames.includes(col));
-        
-        if (missing.length === 0) {
-          success(`${tableName} schema OK`);
-        } else {
-          warn(`${tableName} missing columns: ${missing.join(', ')}`);
-          console.log('   This may be fine if table was created by an older version');
-        }
-      } catch (err) {
-        // Table doesn't exist, already reported
+  const expectedColumns = {
+    'events': ['id', 'title', 'dateTime', 'description', 'duration', 'calendarSourceId', 'guildId', 'channelId'],
+    'calendar_config': ['id', 'name', 'calendarId'],
+    'autosync_config': ['id', 'guildId', 'channelId', 'enabled']
+  };
+  
+  for (const [tableName, columns] of Object.entries(expectedColumns)) {
+    try {
+      const schema = await query(db, `PRAGMA table_info(${tableName})`);
+      const columnNames = schema.map(c => c.name);
+      const missing = columns.filter(col => !columnNames.includes(col));
+      
+      if (missing.length === 0) {
+        success(`${tableName} schema OK`);
+      } else {
+        warn(`${tableName} missing columns: ${missing.join(', ')}`);
+        console.log('   Run: npm start  to trigger schema migration');
       }
+    } catch (err) {
+      // Table doesn't exist yet — already flagged above
     }
-  } catch (err) {
-    warn('Cannot check schemas: ' + err.message);
   }
 
-  // Step 7: Check data
+  // Step 7: Database contents
   section('7. Database Contents');
   
   try {
-    const eventCount = await query(db, 'SELECT COUNT(*) as count FROM events');
-    const calendarCount = await query(db, 'SELECT COUNT(*) as count FROM calendar_config');
-    const autoSyncCount = await query(db, 'SELECT COUNT(*) as count FROM auto_sync_config');
+    const eventCount = (await query(db, 'SELECT COUNT(*) as count FROM events'))[0].count;
+    const calCount = (await query(db, 'SELECT COUNT(*) as count FROM calendar_config'))[0].count;
     
-    console.log(`   Events: ${eventCount[0].count}`);
-    console.log(`   Calendars: ${calendarCount[0].count}`);
-    console.log(`   Auto-sync configs: ${autoSyncCount[0].count}`);
+    let autoSyncCount = 0;
+    try {
+      autoSyncCount = (await query(db, 'SELECT COUNT(*) as count FROM autosync_config'))[0].count;
+    } catch { /* table may not exist yet */ }
+
+    console.log(`   Events: ${eventCount}`);
+    console.log(`   Calendars: ${calCount}`);
+    console.log(`   Auto-sync configs: ${autoSyncCount}`);
     console.log('');
     
-    if (eventCount[0].count === 0) {
-      info('No events in database (this is normal for new setup)');
+    if (eventCount === 0) {
+      info('No events in database (normal for new setup)');
+    }
+    if (calCount === 0) {
+      info('No calendars configured — add them via the web UI');
     }
     
-    if (calendarCount[0].count === 0) {
-      info('No calendars configured');
-      console.log('   Add calendars at: http://localhost:3000');
-    }
-    
-    // Show recent events
-    if (eventCount[0].count > 0) {
+    // Show recent events using the correct camelCase column name
+    if (eventCount > 0) {
       console.log('');
       console.log('   Recent events:');
-      const recentEvents = await query(db, 
-        'SELECT title, datetime, calendarSource FROM events ORDER BY datetime DESC LIMIT 5'
+      const recentEvents = await query(db,
+        'SELECT title, dateTime, calendarSource FROM events ORDER BY dateTime DESC LIMIT 5'
       );
-      
       recentEvents.forEach((evt, idx) => {
-        const date = new Date(evt.datetime).toLocaleString();
+        const date = new Date(evt.dateTime).toLocaleString();
         const source = evt.calendarSource || 'Manual';
         console.log(`     ${idx + 1}. ${evt.title} (${date}) [${source}]`);
       });
@@ -265,57 +227,50 @@ async function main() {
     error('Cannot read data: ' + err.message);
   }
 
-  // Step 8: Check for orphaned data
+  // Step 8: Data consistency
   section('8. Data Consistency');
   
   try {
-    // Check for events with invalid calendar IDs
-    const orphanedEvents = await query(db, `
+    const orphaned = await query(db, `
       SELECT COUNT(*) as count FROM events e
       WHERE e.calendarSourceId IS NOT NULL
       AND NOT EXISTS (
-        SELECT 1 FROM calendar_config c 
-        WHERE c.calendarId = e.calendarSource
+        SELECT 1 FROM calendar_config c
+        WHERE e.calendarSourceId LIKE (c.calendarId || '::%')
       )
     `);
     
-    if (orphanedEvents[0].count > 0) {
-      warn(`Found ${orphanedEvents[0].count} events from deleted calendars`);
-      console.log('');
-      console.log('   You can clean these up if needed:');
-      console.log('   DELETE FROM events WHERE calendarSourceId IS NOT NULL');
-      console.log('   AND calendarSource NOT IN (SELECT calendarId FROM calendar_config);');
-      console.log('');
+    if (orphaned[0].count > 0) {
+      warn(`Found ${orphaned[0].count} events from deleted/unknown calendars`);
+      console.log('   These are events whose source calendar is no longer configured.');
+      console.log('   You can safely delete them from the web UI if needed.');
     } else {
-      success('No orphaned data found');
+      success('No orphaned calendar events found');
     }
   } catch (err) {
     warn('Cannot check data consistency: ' + err.message);
   }
 
-  // Step 9: Database size analysis
+  // Step 9: Statistics
   section('9. Database Statistics');
   
   try {
-    const pageCount = await query(db, 'PRAGMA page_count');
-    const pageSize = await query(db, 'PRAGMA page_size');
-    const freePages = await query(db, 'PRAGMA freelist_count');
+    const pageCount = (await query(db, 'PRAGMA page_count'))[0].page_count;
+    const pageSize  = (await query(db, 'PRAGMA page_size'))[0].page_size;
+    const freePages = (await query(db, 'PRAGMA freelist_count'))[0].freelist_count;
     
-    const totalSize = pageCount[0].page_count * pageSize[0].page_size;
-    const freeSize = freePages[0].freelist_count * pageSize[0].page_size;
-    const usedPercent = ((totalSize - freeSize) / totalSize * 100).toFixed(1);
+    const totalSize = pageCount * pageSize;
+    const freeSize  = freePages * pageSize;
+    const usedPct   = ((totalSize - freeSize) / totalSize * 100).toFixed(1);
     
     console.log(`   Total size: ${(totalSize / 1024).toFixed(2)} KB`);
-    console.log(`   Used: ${usedPercent}%`);
-    console.log(`   Free pages: ${freePages[0].freelist_count}`);
+    console.log(`   Used: ${usedPct}%`);
+    console.log(`   Free pages: ${freePages}`);
     console.log('');
     
-    if (freePages[0].freelist_count > 100) {
-      info('Database has fragmentation');
-      console.log('');
-      console.log('   Optimize with: VACUUM;');
-      console.log('   Or run: node database-diagnostic.js --vacuum');
-      console.log('');
+    if (freePages > 100) {
+      info('Database has some fragmentation');
+      console.log('   Optimize with: node diagnostics/database-diagnostic.js --vacuum');
     } else {
       success('Database is well optimized');
     }
@@ -323,7 +278,6 @@ async function main() {
     warn('Cannot get statistics: ' + err.message);
   }
 
-  // Close database
   db.close();
 
   // Summary
@@ -335,35 +289,25 @@ async function main() {
   } else {
     console.log(colors.red + colors.bright + `❌ Found ${issues.length} issue(s):` + colors.reset);
     console.log('');
-    issues.forEach((issue, idx) => {
-      console.log(`  ${idx + 1}. ${issue}`);
-    });
+    issues.forEach((issue, idx) => console.log(`  ${idx + 1}. ${issue}`));
     console.log('');
-    console.log('Review the fixes suggested above.');
+    console.log('Review the fixes suggested in each section above.');
     console.log('');
   }
   
   console.log(colors.cyan + '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━' + colors.reset);
   console.log('');
   
-  // Check for vacuum flag
+  // Optional VACUUM
   if (process.argv.includes('--vacuum')) {
     section('Running VACUUM');
-    
     const db2 = new sqlite3.Database(dbPath);
-    
     await new Promise((resolve, reject) => {
       db2.run('VACUUM', (err) => {
-        if (err) {
-          error('VACUUM failed: ' + err.message);
-          reject(err);
-        } else {
-          success('Database optimized');
-          resolve();
-        }
+        if (err) { error('VACUUM failed: ' + err.message); reject(err); }
+        else { success('Database optimized'); resolve(); }
       });
     });
-    
     db2.close();
   }
   

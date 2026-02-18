@@ -7,6 +7,9 @@ const { exec } = require('child_process');
 const { promisify } = require('util');
 const execAsync = promisify(exec);
 
+// Project root is one level up from /diagnostics/
+const PROJECT_ROOT = path.join(__dirname, '..');
+
 const colors = {
   reset: '\x1b[0m',
   bright: '\x1b[1m',
@@ -20,24 +23,10 @@ const colors = {
 let issues = [];
 let warnings = [];
 
-function error(msg) {
-  console.log(colors.red + '❌ ' + msg + colors.reset);
-  issues.push(msg);
-}
-
-function warn(msg) {
-  console.log(colors.yellow + '⚠️  ' + msg + colors.reset);
-  warnings.push(msg);
-}
-
-function success(msg) {
-  console.log(colors.green + '✅ ' + msg + colors.reset);
-}
-
-function info(msg) {
-  console.log(colors.cyan + 'ℹ️  ' + msg + colors.reset);
-}
-
+function error(msg)   { console.log(colors.red + '❌ ' + msg + colors.reset); issues.push(msg); }
+function warn(msg)    { console.log(colors.yellow + '⚠️  ' + msg + colors.reset); warnings.push(msg); }
+function success(msg) { console.log(colors.green + '✅ ' + msg + colors.reset); }
+function info(msg)    { console.log(colors.cyan + 'ℹ️  ' + msg + colors.reset); }
 function section(title) {
   console.log('');
   console.log(colors.cyan + colors.bright + '━━━ ' + title + ' ━━━' + colors.reset);
@@ -56,70 +45,45 @@ async function checkNodeVersion() {
     
     if (major < 16) {
       error(`Node.js ${major} is too old (need 16+)`);
-      console.log('');
-      console.log('   Fix: Install Node.js 16 or higher from https://nodejs.org');
-      console.log('');
+      console.log('   Fix: Install Node.js 16+ from https://nodejs.org');
     } else {
       success(`Node.js version OK (${version})`);
     }
   } catch (err) {
     error('Node.js not found');
-    console.log('');
     console.log('   Fix: Install Node.js from https://nodejs.org');
-    console.log('');
   }
 }
 
 async function checkNpmPackages() {
   section('2. NPM Packages');
   
-  const packageJsonPath = path.join(process.cwd(), 'package.json');
+  const packageJsonPath = path.join(PROJECT_ROOT, 'package.json');
   
   if (!fs.existsSync(packageJsonPath)) {
     error('package.json not found');
-    console.log('');
-    console.log('   Are you in the correct directory?');
-    console.log('   Run: cd Discord-Event-Bot');
-    console.log('');
+    console.log('   Are you running from the correct directory?');
     return;
   }
   
   success('package.json found');
   
-  const nodeModulesPath = path.join(process.cwd(), 'node_modules');
+  const nodeModulesPath = path.join(PROJECT_ROOT, 'node_modules');
   
   if (!fs.existsSync(nodeModulesPath)) {
-    error('node_modules not found - packages not installed');
-    console.log('');
+    error('node_modules not found — packages not installed');
     console.log('   Fix: npm install');
-    console.log('');
     return;
   }
   
   success('node_modules folder exists');
   
-  // Check critical packages
-  const criticalPackages = [
-    'discord.js',
-    'express',
-    'sequelize',
-    'sqlite3',
-    'dotenv'
-  ];
-  
-  let missing = [];
-  for (const pkg of criticalPackages) {
-    const pkgPath = path.join(nodeModulesPath, pkg);
-    if (!fs.existsSync(pkgPath)) {
-      missing.push(pkg);
-    }
-  }
+  const criticalPackages = ['discord.js', 'express', 'sequelize', 'sqlite3', 'dotenv', 'archiver'];
+  const missing = criticalPackages.filter(pkg => !fs.existsSync(path.join(nodeModulesPath, pkg)));
   
   if (missing.length > 0) {
     error(`Missing packages: ${missing.join(', ')}`);
-    console.log('');
     console.log('   Fix: npm install');
-    console.log('');
   } else {
     success('All critical packages installed');
   }
@@ -128,80 +92,50 @@ async function checkNpmPackages() {
 async function checkEnvFile() {
   section('3. Environment Configuration');
   
-  const envPath = path.join(process.cwd(), '.env');
-  const envExamplePath = path.join(process.cwd(), '.env.example');
+  const envPath = path.join(PROJECT_ROOT, '.env');
+  const envExamplePath = path.join(PROJECT_ROOT, '.env.example');
   
   if (!fs.existsSync(envPath)) {
     error('.env file not found');
     console.log('');
-    
     if (fs.existsSync(envExamplePath)) {
       console.log('   Fix:');
-      console.log('   1. Copy .env.example to .env');
-      console.log('      cp .env.example .env');
-      console.log('   2. Edit .env and add your Discord bot token');
-      console.log('');
+      console.log('   1. cp .env.example .env');
+      console.log('   2. Edit .env with your Discord token and other settings');
     } else {
-      console.log('   Fix: Create .env file with required variables');
-      console.log('');
+      console.log('   Create a .env file with at minimum:');
+      console.log('   DISCORD_TOKEN=your_bot_token');
+      console.log('   DISCORD_CLIENT_ID=your_client_id');
     }
     return;
   }
   
   success('.env file exists');
   
-  // Check required variables
-  require('dotenv').config();
+  require('dotenv').config({ path: envPath });
   
-  const requiredVars = [
-    'DISCORD_TOKEN',
-    'DISCORD_CLIENT_ID'
-  ];
-  
-  const missingVars = [];
-  const emptyVars = [];
-  
-  for (const varName of requiredVars) {
-    if (!process.env[varName]) {
-      missingVars.push(varName);
-    } else if (process.env[varName].includes('your_') || process.env[varName].includes('YOUR_')) {
-      emptyVars.push(varName);
-    }
-  }
+  const requiredVars = ['DISCORD_TOKEN', 'DISCORD_CLIENT_ID'];
+  const missingVars = requiredVars.filter(v => !process.env[v]);
+  const placeholderVars = requiredVars.filter(v => process.env[v] && (process.env[v].includes('your_') || process.env[v].includes('YOUR_')));
   
   if (missingVars.length > 0) {
     error(`Missing required variables: ${missingVars.join(', ')}`);
-    console.log('');
-    console.log('   Fix: Add these to your .env file');
-    console.log('');
+    console.log('   Add these to your .env file');
   }
   
-  if (emptyVars.length > 0) {
-    error(`Variables not configured: ${emptyVars.join(', ')}`);
-    console.log('');
-    console.log('   These still have placeholder values like "your_token_here"');
-    console.log('');
-    console.log('   Fix:');
-    console.log('   1. Go to https://discord.com/developers/applications');
-    console.log('   2. Select your application');
-    console.log('   3. Get your bot token and client ID');
-    console.log('   4. Update .env file');
-    console.log('');
+  if (placeholderVars.length > 0) {
+    error(`Variables still have placeholder values: ${placeholderVars.join(', ')}`);
+    console.log('   Replace the placeholder values with real ones from:');
+    console.log('   https://discord.com/developers/applications');
   }
   
-  if (missingVars.length === 0 && emptyVars.length === 0) {
+  if (missingVars.length === 0 && placeholderVars.length === 0) {
     success('Required environment variables configured');
     
-    // Validate token format
-    if (process.env.DISCORD_TOKEN) {
-      const token = process.env.DISCORD_TOKEN;
-      if (token.split('.').length !== 3) {
-        warn('DISCORD_TOKEN format looks incorrect');
-        console.log('   Discord tokens have 3 parts separated by dots');
-        console.log('');
-      } else {
-        success('DISCORD_TOKEN format looks valid');
-      }
+    if (process.env.DISCORD_TOKEN && process.env.DISCORD_TOKEN.split('.').length !== 3) {
+      warn('DISCORD_TOKEN format looks incorrect (should have 3 parts separated by dots)');
+    } else if (process.env.DISCORD_TOKEN) {
+      success('DISCORD_TOKEN format looks valid');
     }
   }
 }
@@ -209,181 +143,59 @@ async function checkEnvFile() {
 async function checkDataDirectory() {
   section('4. Data Directory');
   
-  const dataPath = path.join(process.cwd(), 'data');
+  const dataPath = path.join(PROJECT_ROOT, 'data');
   
   if (!fs.existsSync(dataPath)) {
-    warn('data/ directory not found');
-    console.log('');
-    console.log('   Creating data directory...');
+    warn('data/ directory not found — creating...');
     fs.mkdirSync(dataPath, { recursive: true });
     success('Created data/ directory');
-    console.log('');
   } else {
     success('data/ directory exists');
   }
   
-  // Check for database
   const dbPath = path.join(dataPath, 'database.sqlite');
   if (fs.existsSync(dbPath)) {
-    success('Database file exists');
-    
     const stats = fs.statSync(dbPath);
-    console.log(`   Size: ${(stats.size / 1024).toFixed(2)} KB`);
+    success(`Database file exists (${(stats.size / 1024).toFixed(2)} KB)`);
     console.log(`   Modified: ${stats.mtime.toLocaleString()}`);
   } else {
-    info('Database file will be created on first run');
-  }
-}
-
-async function checkDiscordBot() {
-  section('5. Discord Bot Setup');
-  
-  require('dotenv').config();
-  
-  if (!process.env.DISCORD_TOKEN || process.env.DISCORD_TOKEN.includes('your_')) {
-    error('Discord token not configured (see step 3)');
-    return;
+    info('Database will be created automatically on first run');
   }
   
-  info('Testing Discord bot connection...');
-  
-  try {
-    const { Client, GatewayIntentBits } = require('discord.js');
-    
-    const client = new Client({
-      intents: [
-        GatewayIntentBits.Guilds,
-        GatewayIntentBits.GuildMessages
-      ]
-    });
-    
-    const loginPromise = new Promise((resolve, reject) => {
-      client.once('ready', () => {
-        resolve(true);
-      });
-      
-      client.on('error', reject);
-      
-      setTimeout(() => reject(new Error('Timeout')), 10000);
-    });
-    
-    await client.login(process.env.DISCORD_TOKEN);
-    await loginPromise;
-    
-    success('Discord bot connected successfully!');
-    console.log(`   Bot username: ${client.user.tag}`);
-    console.log(`   Bot ID: ${client.user.id}`);
-    
-    await client.destroy();
-    
-  } catch (err) {
-    error('Discord bot connection failed');
-    console.log('');
-    console.log(`   Error: ${err.message}`);
-    console.log('');
-    
-    if (err.message.includes('token')) {
-      console.log('   Possible issues:');
-      console.log('   • Invalid or expired bot token');
-      console.log('   • Token has typos or extra spaces');
-      console.log('');
-      console.log('   Fix:');
-      console.log('   1. Go to https://discord.com/developers/applications');
-      console.log('   2. Select your application → Bot');
-      console.log('   3. Click "Reset Token" to get a new token');
-      console.log('   4. Update DISCORD_TOKEN in .env');
-      console.log('');
-    }
-  }
-}
-
-async function checkPM2() {
-  section('6. PM2 Process Manager');
-  
-  try {
-    await execAsync('pm2 --version');
-    const { stdout } = await execAsync('pm2 --version');
-    success(`PM2 installed (version ${stdout.trim()})`);
-  } catch (err) {
-    warn('PM2 not installed');
-    console.log('');
-    console.log('   PM2 is optional but recommended for production');
-    console.log('');
-    console.log('   Install: npm install -g pm2');
-    console.log('   Or run bot directly: node src/bot.js');
-    console.log('');
-  }
-}
-
-async function checkWebServerPort() {
-  section('7. Web Server Port');
-  
-  require('dotenv').config();
-  
-  const port = process.env.WEB_PORT || 3000;
-  
-  info(`Web server will run on port ${port}`);
-  
-  // Try to connect to see if port is already in use
-  const net = require('net');
-  
-  const checkPort = () => {
-    return new Promise((resolve) => {
-      const server = net.createServer();
-      
-      server.once('error', (err) => {
-        if (err.code === 'EADDRINUSE') {
-          resolve(false);
-        } else {
-          resolve(true);
-        }
-      });
-      
-      server.once('listening', () => {
-        server.close();
-        resolve(true);
-      });
-      
-      server.listen(port);
-    });
-  };
-  
-  const available = await checkPort();
-  
-  if (available) {
-    success(`Port ${port} is available`);
-  } else {
-    warn(`Port ${port} is already in use`);
-    console.log('');
-    console.log('   Fix: Either:');
-    console.log('   • Stop the other process using the port');
-    console.log('   • Change WEB_PORT in .env to a different port');
-    console.log('');
+  const backupsPath = path.join(dataPath, 'backups');
+  if (fs.existsSync(backupsPath)) {
+    const backups = fs.readdirSync(backupsPath).filter(f => f.endsWith('.zip'));
+    info(`Backup directory exists (${backups.length} backup(s))`);
   }
 }
 
 async function checkFileStructure() {
-  section('8. File Structure');
+  section('5. File Structure');
   
   const requiredFiles = [
     'src/bot.js',
     'src/config/database.js',
+    'src/config/index.js',
     'src/models/index.js',
-    'web-server.js',
+    'src/services/eventManager.js',
+    'src/utils/datetime.js',
     'package.json'
   ];
   
   const requiredDirs = [
     'src',
-    'src/commands',
+    'src/discord',
+    'src/discord/commands',
     'src/models',
-    'src/config'
+    'src/config',
+    'src/services',
+    'src/utils'
   ];
   
   let allGood = true;
   
   for (const file of requiredFiles) {
-    if (fs.existsSync(path.join(process.cwd(), file))) {
+    if (fs.existsSync(path.join(PROJECT_ROOT, file))) {
       console.log(colors.green + `   ✓ ${file}` + colors.reset);
     } else {
       console.log(colors.red + `   ✗ ${file} (missing)` + colors.reset);
@@ -392,7 +204,7 @@ async function checkFileStructure() {
   }
   
   for (const dir of requiredDirs) {
-    if (fs.existsSync(path.join(process.cwd(), dir))) {
+    if (fs.existsSync(path.join(PROJECT_ROOT, dir))) {
       console.log(colors.green + `   ✓ ${dir}/` + colors.reset);
     } else {
       console.log(colors.red + `   ✗ ${dir}/ (missing)` + colors.reset);
@@ -406,10 +218,97 @@ async function checkFileStructure() {
     success('All required files and directories present');
   } else {
     error('Some required files/directories are missing');
+    console.log('   Ensure you have the complete project — re-clone if needed');
+  }
+}
+
+async function checkWebServerPort() {
+  section('6. Web Server Port');
+  
+  require('dotenv').config({ path: path.join(PROJECT_ROOT, '.env') });
+  const port = process.env.WEB_PORT || 3000;
+  info(`Web server configured for port ${port}`);
+  
+  const net = require('net');
+  const available = await new Promise((resolve) => {
+    const server = net.createServer();
+    server.once('error', (err) => resolve(err.code !== 'EADDRINUSE'));
+    server.once('listening', () => { server.close(); resolve(true); });
+    server.listen(port);
+  });
+  
+  if (available) {
+    success(`Port ${port} is available`);
+  } else {
+    warn(`Port ${port} is already in use`);
+    console.log('   This is fine if the bot/web server is already running');
+    console.log('   To use a different port, set WEB_PORT in .env');
+  }
+}
+
+async function checkPM2() {
+  section('7. PM2 Process Manager');
+  
+  try {
+    const { stdout } = await execAsync('pm2 --version');
+    success(`PM2 installed (v${stdout.trim()})`);
+  } catch (err) {
+    warn('PM2 not installed');
+    console.log('   PM2 is recommended for production use');
+    console.log('   Install: npm install -g pm2');
+    console.log('   Or run the bot directly: node src/bot.js');
+  }
+}
+
+async function checkDiscordBot() {
+  section('8. Discord Bot Connection Test');
+  
+  require('dotenv').config({ path: path.join(PROJECT_ROOT, '.env') });
+  
+  if (!process.env.DISCORD_TOKEN || process.env.DISCORD_TOKEN.includes('your_')) {
+    error('Discord token not configured (see step 3)');
+    return;
+  }
+  
+  info('Testing Discord bot connection...');
+  
+  try {
+    const { Client, GatewayIntentBits } = require('discord.js');
+    
+    const client = new Client({
+      intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages]
+    });
+    
+    await new Promise((resolve, reject) => {
+      client.once('ready', () => {
+        success(`Discord bot connected: ${client.user.tag}`);
+        console.log(`   Bot ID: ${client.user.id}`);
+        console.log(`   Servers: ${client.guilds.cache.size}`);
+        
+        if (client.guilds.cache.size === 0) {
+          warn('Bot is not in any servers — invite it via OAuth2 URL Generator');
+        } else {
+          client.guilds.cache.forEach(g => console.log(`      • ${g.name} (${g.memberCount} members)`));
+        }
+        
+        client.destroy();
+        resolve();
+      });
+      
+      client.on('error', reject);
+      setTimeout(() => reject(new Error('Login timeout (15 seconds)')), 15000);
+      client.login(process.env.DISCORD_TOKEN).catch(reject);
+    });
+    
+  } catch (err) {
+    error('Discord bot connection failed: ' + err.message);
     console.log('');
-    console.log('   Fix: Ensure you have the complete repository');
-    console.log('   Clone again from: https://github.com/yourusername/Discord-Event-Bot');
-    console.log('');
+    if (err.message.includes('token')) {
+      console.log('   Fix:');
+      console.log('   1. Go to https://discord.com/developers/applications');
+      console.log('   2. Select your app → Bot → Reset Token');
+      console.log('   3. Update DISCORD_TOKEN in .env');
+    }
   }
 }
 
@@ -437,39 +336,28 @@ async function main() {
     console.log('');
     console.log(colors.bright + 'Next steps:' + colors.reset);
     console.log('');
-    console.log('1. Start the bot:');
-    console.log(colors.cyan + '   npm run pm2:start' + colors.reset);
-    console.log('');
-    console.log('2. Check status:');
-    console.log(colors.cyan + '   pm2 status' + colors.reset);
-    console.log('');
-    console.log('3. View logs:');
-    console.log(colors.cyan + '   pm2 logs discord-event-bot' + colors.reset);
-    console.log('');
-    console.log('4. Open web UI:');
-    console.log(colors.cyan + '   http://localhost:' + (process.env.WEB_PORT || 3000) + colors.reset);
+    console.log('1. Start the bot:       ' + colors.cyan + 'npm run pm2:start' + colors.reset);
+    console.log('2. Check status:        ' + colors.cyan + 'pm2 status' + colors.reset);
+    console.log('3. View logs:           ' + colors.cyan + 'pm2 logs discord-event-bot' + colors.reset);
+    console.log('4. Open web UI:         ' + colors.cyan + 'http://localhost:' + (process.env.WEB_PORT || 3000) + colors.reset);
     console.log('');
   } else {
     if (issues.length > 0) {
       console.log(colors.red + colors.bright + `❌ Found ${issues.length} issue(s) that must be fixed:` + colors.reset);
       console.log('');
-      issues.forEach((issue, idx) => {
-        console.log(`  ${idx + 1}. ${issue}`);
-      });
+      issues.forEach((issue, idx) => console.log(`  ${idx + 1}. ${issue}`));
       console.log('');
     }
     
     if (warnings.length > 0) {
       console.log(colors.yellow + `⚠️  Found ${warnings.length} warning(s):` + colors.reset);
       console.log('');
-      warnings.forEach((warning, idx) => {
-        console.log(`  ${idx + 1}. ${warning}`);
-      });
+      warnings.forEach((w, idx) => console.log(`  ${idx + 1}. ${w}`));
       console.log('');
     }
     
-    console.log(colors.bright + 'Fix these issues, then run this diagnostic again:' + colors.reset);
-    console.log(colors.cyan + '  node setup-diagnostic.js' + colors.reset);
+    console.log('Fix these issues, then run:');
+    console.log(colors.cyan + '  node diagnostics/setup-diagnostic.js' + colors.reset);
     console.log('');
   }
   

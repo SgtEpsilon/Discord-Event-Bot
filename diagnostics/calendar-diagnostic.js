@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // calendar-diagnostic.js - Diagnose Calendar Import Issues
 
-require('dotenv').config();
+require('dotenv').config({ path: require('path').join(__dirname, '../.env') });
 const path = require('path');
 
 const colors = {
@@ -23,7 +23,7 @@ async function main() {
 
   try {
     // Initialize database
-    const { testConnection, initializeDatabase } = require('./src/config/database');
+    const { testConnection, initializeDatabase } = require('../src/config/database');
     console.log('🔌 Connecting to database...');
     const connected = await testConnection();
     
@@ -37,13 +37,14 @@ async function main() {
     console.log('');
 
     // Load calendar configs from database
-    const { CalendarConfig } = require('./src/models');
+    const { CalendarConfig, Event } = require('../src/models');
+    const { Op } = require('sequelize');
     const configs = await CalendarConfig.findAll();
     
     if (configs.length === 0) {
       console.log(colors.yellow + '⚠️  No calendars configured in database' + colors.reset);
       console.log('');
-      console.log('Add calendars via the web UI: http://localhost:3000');
+      console.log('Add calendars via the web UI: http://localhost:' + (process.env.WEB_PORT || 3000));
       console.log('');
       process.exit(0);
     }
@@ -51,9 +52,8 @@ async function main() {
     console.log(colors.bright + `Found ${configs.length} calendar(s) in database:` + colors.reset);
     console.log('');
 
-    // Test each calendar
-    const CalendarService = require('./src/services/calendar');
-    const { config } = require('./src/config');
+    const CalendarService = require('../src/services/calendar');
+    const { config } = require('../src/config');
     
     for (let i = 0; i < configs.length; i++) {
       const cal = configs[i];
@@ -66,13 +66,10 @@ async function main() {
       console.log(`Type: ${isIcal ? '🔗 iCal URL' : '📅 Google Calendar'}`);
       console.log('');
 
-      // Create a temporary calendar service with just this calendar
-      const calendars = [{
+      const calendarService = new CalendarService(config.google.credentials, [{
         name: cal.name,
         id: cal.calendarId
-      }];
-      
-      const calendarService = new CalendarService(config.google.credentials, calendars);
+      }]);
 
       try {
         console.log('🔍 Testing connection...');
@@ -89,7 +86,7 @@ async function main() {
 
         // Try to fetch events
         console.log('📥 Fetching events (next 31 days)...');
-        const result = await calendarService.syncEvents(744); // 31 days
+        const result = await calendarService.syncEvents(744); // 31 days in hours
         
         if (!result.success) {
           console.log(colors.red + `❌ Sync failed: ${result.message}` + colors.reset);
@@ -119,15 +116,13 @@ async function main() {
 
         console.log('');
 
-        // Check if events are being imported to database
+        // Check how many of this calendar's events are in the database
         console.log('💾 Checking database imports...');
-        const { Event } = require('./src/models');
-        
         const sourceIdPrefix = `${cal.calendarId}::`;
         const importedEvents = await Event.findAll({
           where: {
             calendarSourceId: {
-              [require('sequelize').Op.like]: `${sourceIdPrefix}%`
+              [Op.like]: `${sourceIdPrefix}%`
             }
           }
         });
@@ -151,7 +146,6 @@ async function main() {
       } catch (error) {
         console.log(colors.red + `❌ Error: ${error.message}` + colors.reset);
         console.log('');
-        
         if (error.stack) {
           console.log(colors.dim + 'Stack trace:' + colors.reset);
           console.log(colors.dim + error.stack + colors.reset);
@@ -166,14 +160,10 @@ async function main() {
     console.log(colors.bright + '📊 Summary' + colors.reset);
     console.log('');
 
-    const { Event } = require('./src/models');
+    const { Op } = require('sequelize');
     const totalEvents = await Event.count();
     const calendarEvents = await Event.count({
-      where: {
-        calendarSourceId: {
-          [require('sequelize').Op.not]: null
-        }
-      }
+      where: { calendarSourceId: { [Op.not]: null } }
     });
 
     console.log(`Total events in database: ${colors.bright}${totalEvents}${colors.reset}`);
@@ -184,7 +174,6 @@ async function main() {
     console.log(colors.green + '✅ Diagnostic complete!' + colors.reset);
     console.log('');
 
-    // Recommendations
     console.log(colors.yellow + '💡 Recommendations:' + colors.reset);
     console.log('');
     console.log('1. If a calendar shows "Connection failed":');
@@ -196,8 +185,8 @@ async function main() {
     console.log('   • Verify events have specific times (all-day events are skipped)');
     console.log('');
     console.log('3. If events found but not in database:');
-    console.log('   • Run manual sync from web UI');
-    console.log('   • Check background sync is enabled');
+    console.log('   • Run manual sync: /sync in Discord');
+    console.log('   • Check auto-sync is enabled: /autosync');
     console.log('');
 
     process.exit(0);
