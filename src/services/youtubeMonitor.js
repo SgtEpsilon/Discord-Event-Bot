@@ -18,7 +18,7 @@ class YouTubeMonitor {
      * Check all monitored YouTube channels
      */
     async checkVideos() {
-        const allConfigs = this.streamingConfig.getAllGuildConfigs();
+        const allConfigs = await this.streamingConfig.getAllGuildConfigs();
         
         for (const [guildId, guildConfig] of Object.entries(allConfigs)) {
             if (!guildConfig.youtube.enabled || !guildConfig.notificationChannelId) {
