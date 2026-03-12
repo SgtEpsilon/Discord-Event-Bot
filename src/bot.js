@@ -876,10 +876,13 @@ client.on('interactionCreate', async interaction => {
     if (!command) return;
     
     try {
+      // Create calendar service on-demand so slash commands have a valid object
+      const calendarServiceForContext = await createCalendarService();
+
       const context = {
         eventManager,
         presetManager,
-        calendarService: null, // Will be created on-demand
+        calendarService: calendarServiceForContext || { isEnabled: () => false, getCalendars: () => [] },
         eventsConfig,
         streamingConfig,
         twitchMonitor,

@@ -36,7 +36,7 @@ const config = {
   
   // Google Calendar configuration
   google: {
-    credentials: process.env.GOOGLE_CREDENTIALS || null,
+    credentials: process.env.GOOGLE_CALENDAR_CREDENTIALS || process.env.GOOGLE_CREDENTIALS || null,
     calendarIds: process.env.CALENDAR_IDS || 'primary',
     calendars: parseCalendarIds(process.env.CALENDAR_IDS || 'primary')
   },
@@ -90,7 +90,7 @@ function validateWebConfig() {
   }
   
   if (!config.google.credentials) {
-    warnings.push('GOOGLE_CREDENTIALS not set - calendar sync will be disabled');
+    warnings.push('GOOGLE_CALENDAR_CREDENTIALS not set - calendar sync will be disabled');
   }
   
   if (!config.twitch.clientId || !config.twitch.clientSecret) {

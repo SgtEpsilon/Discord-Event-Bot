@@ -717,167 +717,60 @@ function hideManualCalendarAdd() {
     hideAlert('addCalendarAlert');
 }
 
-// ==================== GOOGLE OAUTH ====================
+// ==================== GOOGLE SERVICE ACCOUNT ====================
 
 async function checkGoogleOAuthStatus() {
     const statusDiv = document.getElementById('googleOAuthStatus');
     const contentDiv = document.getElementById('googleOAuthContent');
-    
+
     try {
-        // Check if OAuth is configured
-        const configResponse = await fetch('/api/oauth/google/status');
-        const configData = await configResponse.json();
-        
-        if (!configData.configured) {
-            statusDiv.innerHTML = `
-                <div class="status-indicator warning">
-                    <span class="status-dot"></span>
-                    <div>
-                        <strong>OAuth Not Configured</strong>
-                        <p>Google OAuth is not set up. You can still add calendars manually.</p>
-                    </div>
-                </div>
-            `;
-            return;
-        }
-        
-        // Check if user is authenticated
-        const userResponse = await fetch('/api/oauth/google/user-status', {
-            headers: { 'X-Auth-Token': authToken }
-        });
-        const userData = await userResponse.json();
-        
+        const response = await fetch('/api/oauth/google/status');
+        const data = await response.json();
+
         statusDiv.classList.add('hidden');
         contentDiv.classList.remove('hidden');
-        
-        if (userData.authenticated) {
-            updateGoogleOAuthUI(userData.user);
-        } else {
+
+        if (!data.configured) {
             document.getElementById('googleNotLoggedIn').classList.remove('hidden');
             document.getElementById('googleLoggedIn').classList.add('hidden');
-        }
-    } catch (error) {
-        console.error('Error checking OAuth status:', error);
-        statusDiv.innerHTML = '<p class="error-text">Failed to check OAuth status</p>';
-    }
-}
-
-function updateGoogleOAuthUI(user) {
-    document.getElementById('googleNotLoggedIn').classList.add('hidden');
-    document.getElementById('googleLoggedIn').classList.remove('hidden');
-    
-    document.getElementById('googleUserName').textContent = user.name;
-    document.getElementById('googleUserEmail').textContent = user.email;
-    
-    if (user.picture) {
-        document.getElementById('googleUserPicture').src = user.picture;
-    }
-    
-    // Check token expiry
-    if (user.tokenExpiry) {
-        const expiryDate = new Date(user.tokenExpiry);
-        const now = new Date();
-        const hoursUntilExpiry = (expiryDate - now) / (1000 * 60 * 60);
-        
-        if (hoursUntilExpiry < 24) {
-            document.getElementById('googleTokenExpiry').classList.remove('hidden');
-        }
-    }
-}
-
-async function loginWithGoogle() {
-    try {
-        const response = await fetch('/api/oauth/google/login', {
-            headers: { 'X-Auth-Token': authToken }
-        });
-        const data = await response.json();
-        
-        if (data.authUrl) {
-            // Open OAuth flow in new window
-            const width = 600;
-            const height = 700;
-            const left = window.screenX + (window.outerWidth - width) / 2;
-            const top = window.screenY + (window.outerHeight - height) / 2;
-            
-            const popup = window.open(
-                data.authUrl,
-                'Google OAuth',
-                `width=${width},height=${height},left=${left},top=${top}`
-            );
-            
-            // Poll for completion
-            const pollInterval = setInterval(() => {
-                try {
-                    if (popup.closed) {
-                        clearInterval(pollInterval);
-                        // Refresh OAuth status
-                        checkGoogleOAuthStatus();
-                    }
-                } catch (e) {
-                    // Cross-origin errors are expected
-                }
-            }, 500);
-        }
-    } catch (error) {
-        console.error('Error starting OAuth flow:', error);
-        alert('Failed to start Google login. Please try again.');
-    }
-}
-
-async function logoutFromGoogle() {
-    if (!confirm('Disconnect your Google account? This will revoke access to your calendars.')) {
-        return;
-    }
-    
-    try {
-        const response = await fetch('/api/oauth/google/logout', {
-            method: 'POST',
-            headers: { 'X-Auth-Token': authToken }
-        });
-        
-        const data = await response.json();
-        
-        if (data.success) {
-            alert('✅ Successfully disconnected from Google');
-            checkGoogleOAuthStatus();
         } else {
-            alert('❌ Failed to disconnect: ' + (data.error || 'Unknown error'));
+            document.getElementById('googleNotLoggedIn').classList.add('hidden');
+            document.getElementById('googleLoggedIn').classList.remove('hidden');
+            document.getElementById('googleUserEmail').textContent = data.serviceAccountEmail || '';
         }
     } catch (error) {
-        console.error('Error logging out from Google:', error);
-        alert('❌ Failed to disconnect. Please try again.');
+        console.error('Error checking service account status:', error);
+        statusDiv.innerHTML = '<p class="error-text">Failed to check service account status</p>';
     }
 }
 
 async function loadOAuthCalendars() {
     const section = document.getElementById('availableCalendarsSection');
     const list = document.getElementById('availableCalendarsList');
-    
+
     section.classList.remove('hidden');
-    list.innerHTML = '<div class="loading">Loading your Google Calendars via OAuth...</div>';
-    
-    // Hide manual section
+    list.innerHTML = '<div class="loading">Loading calendars from service account...</div>';
     document.getElementById('manualCalendarSection').classList.add('hidden');
-    
+
     try {
         const response = await fetch('/api/oauth/google/calendars', {
             headers: { 'X-Auth-Token': authToken }
         });
-        
+
         const data = await response.json();
-        
-        if (!data.success) {
-            list.innerHTML = `<p class="error-text">Failed to load calendars: ${data.error}</p>`;
+
+        if (!response.ok) {
+            list.innerHTML = `<p class="error-text">Failed to load calendars: ${data.error || 'Unknown error'}</p>`;
             return;
         }
-        
-        const calendars = data.calendars;
-        
+
+        const calendars = Array.isArray(data) ? data : [];
+
         if (calendars.length === 0) {
-            list.innerHTML = '<p class="empty-state">No calendars found in your Google account.</p>';
+            list.innerHTML = '<p class="empty-state">No calendars found. Make sure you have shared at least one calendar with the service account email.</p>';
             return;
         }
-        
+
         list.innerHTML = calendars.map(cal => `
             <div class="calendar-option">
                 <div class="calendar-option-info">
@@ -891,7 +784,7 @@ async function loadOAuthCalendars() {
             </div>
         `).join('');
     } catch (error) {
-        console.error('Error loading OAuth calendars:', error);
+        console.error('Error loading calendars:', error);
         list.innerHTML = '<p class="error-text">Failed to load calendars. Please try again.</p>';
     }
 }
@@ -909,9 +802,9 @@ async function addCalendarFromOAuth(calendar) {
                 calendarId: calendar.id
             })
         });
-        
+
         const data = await response.json();
-        
+
         if (data.success) {
             alert(`✅ Calendar "${calendar.name}" added successfully!`);
             loadConfiguredCalendars();

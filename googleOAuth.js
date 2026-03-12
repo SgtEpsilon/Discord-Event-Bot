@@ -1,14 +1,18 @@
 // googleOAuth.js - Google OAuth2 flow for calendar access
-// Stores tokens in the database via the UserOAuth model.
+// Credentials are loaded from the encrypted secrets store (data/secrets.enc).
+// Run "node setup-secrets.js" once to create the secrets file.
+// The service account (GOOGLE_CALENDAR_CREDENTIALS) is separate and only used for calendar sync.
+//
 // Usage:
 //   const GoogleOAuth = require('./googleOAuth');
 //   const oauth = new GoogleOAuth();
-//   const authUrl = oauth.getAuthUrl();          // redirect user here
-//   const tokens = await oauth.handleCallback(code); // exchange code for tokens
-//   const client = await oauth.getAuthenticatedClient(); // use for API calls
+//   await oauth.init();                               // must call before anything else
+//   const authUrl = oauth.getAuthUrl();               // redirect user here
+//   const tokens  = await oauth.handleCallback(code); // exchange code for tokens
+//   const client  = await oauth.getAuthenticatedClient(); // use for API calls
 
-require('dotenv').config();
 const { google } = require('googleapis');
+const { getSecret } = require('./src/services/secrets');
 
 const SCOPES = [
   'https://www.googleapis.com/auth/calendar.readonly',
@@ -19,56 +23,72 @@ const SCOPES = [
 // Single shared user ID — the bot authenticates as one Google account
 const BOT_USER_ID = 'bot';
 
+// ---------------------------------------------------------------------------
+// OAuth uses GOOGLE_OAUTH_* secrets (Web Application credentials from Google Cloud Console).
+// These are SEPARATE from GOOGLE_CALENDAR_CREDENTIALS (Service Account for calendar sync).
+// ---------------------------------------------------------------------------
+
 class GoogleOAuth {
   constructor() {
-    const clientId     = process.env.GOOGLE_CLIENT_ID;
-    const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
-    const redirectUri  = process.env.GOOGLE_REDIRECT_URI || 'http://localhost:3000/api/oauth/google/callback';
+    // oauth2Client is set up in init() after async secret loading
+    this.oauth2Client = null;
+  }
+
+  /**
+   * Must be called once before using any other method.
+   * Loads credentials from the encrypted secrets store.
+   */
+  async init() {
+    if (this.oauth2Client) return; // already initialised
+
+    const clientId     = await getSecret('GOOGLE_OAUTH_CLIENT_ID');
+    const clientSecret = await getSecret('GOOGLE_OAUTH_CLIENT_SECRET');
+    const redirectUri  = await getSecret('GOOGLE_OAUTH_REDIRECT_URI') ||
+                         'http://localhost:3031/api/oauth/google/callback';
 
     if (!clientId || !clientSecret) {
       throw new Error(
-        'Missing GOOGLE_CLIENT_ID or GOOGLE_CLIENT_SECRET in .env. ' +
-        'See QUICKSTART.md for Google Cloud Console setup instructions.'
+        'Missing GOOGLE_OAUTH_CLIENT_ID or GOOGLE_OAUTH_CLIENT_SECRET.\n' +
+        'Run "node setup-secrets.js" to add them to the encrypted secrets store.'
       );
     }
 
     this.oauth2Client = new google.auth.OAuth2(clientId, clientSecret, redirectUri);
   }
 
-  // ─── Auth URL ────────────────────────────────────────────────────────────────
+  // --- Auth URL --------------------------------------------------------------
 
   getAuthUrl() {
+    if (!this.oauth2Client) throw new Error('Call await oauth.init() before using GoogleOAuth.');
     return this.oauth2Client.generateAuthUrl({
-      access_type: 'offline',   // get a refresh token
-      prompt: 'consent',        // force consent screen so refresh token is always returned
+      access_type: 'offline',  // get a refresh token
+      prompt: 'consent',       // force consent screen so refresh token is always returned
       scope: SCOPES
     });
   }
 
-  // ─── Code exchange ───────────────────────────────────────────────────────────
+  // --- Code exchange ---------------------------------------------------------
 
   async handleCallback(code) {
     const { tokens } = await this.oauth2Client.getToken(code);
     this.oauth2Client.setCredentials(tokens);
 
-    // Fetch the authenticated user's profile
     const oauth2 = google.oauth2({ version: 'v2', auth: this.oauth2Client });
     const { data: profile } = await oauth2.userinfo.get();
 
-    // Persist tokens
     await this._saveTokens(tokens, profile);
 
     return { tokens, profile };
   }
 
-  // ─── Authenticated client ────────────────────────────────────────────────────
+  // --- Authenticated client --------------------------------------------------
 
   async getAuthenticatedClient() {
     const { UserOAuth } = require('./src/models');
     const record = await UserOAuth.findOne({ where: { userId: BOT_USER_ID } });
 
     if (!record) {
-      throw new Error('No Google account connected. Visit the web UI → Google Calendar tab to authenticate.');
+      throw new Error('No Google account connected. Visit the web UI to authenticate.');
     }
 
     this.oauth2Client.setCredentials({
@@ -77,33 +97,29 @@ class GoogleOAuth {
       expiry_date:   record.tokenExpiry ? new Date(record.tokenExpiry).getTime() : null
     });
 
-    // Auto-refresh if token is expired or close to expiry (< 5 minutes left)
-    const expiry = record.tokenExpiry ? new Date(record.tokenExpiry).getTime() : 0;
+    const expiry      = record.tokenExpiry ? new Date(record.tokenExpiry).getTime() : 0;
     const fiveMinutes = 5 * 60 * 1000;
     if (!expiry || Date.now() > expiry - fiveMinutes) {
       if (!record.refreshToken) {
-        throw new Error('Access token expired and no refresh token available. Please re-authenticate via the web UI.');
+        throw new Error('Access token expired and no refresh token available. Please re-authenticate.');
       }
       try {
         const { credentials } = await this.oauth2Client.refreshAccessToken();
         this.oauth2Client.setCredentials(credentials);
-
-        // Update stored token
         await record.update({
           accessToken: credentials.access_token,
           tokenExpiry: credentials.expiry_date ? new Date(credentials.expiry_date) : null
         });
-
-        console.log('[OAuth] ✅ Access token refreshed');
+        console.log('[OAuth] Access token refreshed');
       } catch (err) {
-        throw new Error(`Token refresh failed: ${err.message}. Please re-authenticate via the web UI.`);
+        throw new Error(`Token refresh failed: ${err.message}. Please re-authenticate.`);
       }
     }
 
     return this.oauth2Client;
   }
 
-  // ─── Status helpers ──────────────────────────────────────────────────────────
+  // --- Status helpers --------------------------------------------------------
 
   async isAuthenticated() {
     try {
@@ -132,7 +148,6 @@ class GoogleOAuth {
       const record = await UserOAuth.findOne({ where: { userId: BOT_USER_ID } });
       if (!record) return;
 
-      // Revoke with Google (best-effort)
       try {
         this.oauth2Client.setCredentials({ access_token: record.accessToken });
         await this.oauth2Client.revokeCredentials();
@@ -148,10 +163,10 @@ class GoogleOAuth {
     }
   }
 
-  // ─── List calendars ──────────────────────────────────────────────────────────
+  // --- List calendars --------------------------------------------------------
 
   async listCalendars() {
-    const auth = await this.getAuthenticatedClient();
+    const auth        = await this.getAuthenticatedClient();
     const calendarApi = google.calendar({ version: 'v3', auth });
 
     const response = await calendarApi.calendarList.list({
@@ -160,16 +175,16 @@ class GoogleOAuth {
     });
 
     return (response.data.items || []).map(cal => ({
-      id: cal.id,
-      summary: cal.summary,
-      description: cal.description || '',
-      primary: cal.primary || false,
-      accessRole: cal.accessRole,
+      id:              cal.id,
+      summary:         cal.summary,
+      description:     cal.description || '',
+      primary:         cal.primary || false,
+      accessRole:      cal.accessRole,
       backgroundColor: cal.backgroundColor
     }));
   }
 
-  // ─── Private ─────────────────────────────────────────────────────────────────
+  // --- Private ---------------------------------------------------------------
 
   async _saveTokens(tokens, profile) {
     const { UserOAuth } = require('./src/models');
@@ -178,7 +193,7 @@ class GoogleOAuth {
       userId:       BOT_USER_ID,
       provider:     'google',
       email:        profile.email,
-      name:         profile.name  || null,
+      name:         profile.name    || null,
       picture:      profile.picture || null,
       accessToken:  tokens.access_token,
       refreshToken: tokens.refresh_token || null,
@@ -186,7 +201,7 @@ class GoogleOAuth {
       scopes:       SCOPES
     });
 
-    console.log(`[OAuth] ✅ Google account connected: ${profile.email}`);
+    console.log(`[OAuth] Google account connected: ${profile.email}`);
   }
 }
 

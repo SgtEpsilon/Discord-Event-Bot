@@ -260,7 +260,7 @@ app.get('/api/calendars/status', verifySession, async (req, res) => {
     try {
       const credentialsPath = process.env.GOOGLE_CALENDAR_CREDENTIALS || 
                              process.env.GOOGLE_CREDENTIALS ||
-                             path.join(__dirname, 'data', 'calendar-credentials.json');
+                             path.join(__dirname, 'src', 'data', 'calendar-credentials.json');
       apiConfigured = fs.existsSync(credentialsPath);
     } catch (error) {
       apiConfigured = false;
@@ -314,7 +314,7 @@ app.get('/api/calendars/available', verifySession, async (req, res) => {
     // Read credentials from the configured path
     const credentialsPath = process.env.GOOGLE_CALENDAR_CREDENTIALS || 
                            process.env.GOOGLE_CREDENTIALS ||
-                           path.join(__dirname, 'data', 'calendar-credentials.json');
+                           path.join(__dirname, 'src', 'data', 'calendar-credentials.json');
     
     const fs = require('fs');
     if (!fs.existsSync(credentialsPath)) {

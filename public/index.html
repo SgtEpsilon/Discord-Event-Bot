@@ -265,43 +265,41 @@
                         </div>
                     </div>
 
-                    <!-- Google OAuth Login -->
+                    <!-- Google Service Account Status -->
                     <div class="config-card" id="googleOAuthCard">
                         <div class="config-header">
-                            <div class="config-title">🔐 Google Account</div>
+                            <div class="config-title">🔑 Google Service Account</div>
                         </div>
                         <div id="googleOAuthStatus">
-                            <div class="loading">Checking Google OAuth status...</div>
+                            <div class="loading">Checking service account status...</div>
                         </div>
                         <div id="googleOAuthContent" class="hidden">
-                            <!-- Not logged in state -->
+                            <!-- Not configured state -->
                             <div id="googleNotLoggedIn" class="hidden">
-                                <p>Connect your Google account to easily browse and add your calendars.</p>
-                                <button class="btn btn-primary" onclick="loginWithGoogle()">
-                                    <span style="font-size: 1.2em;">🔐</span> Login with Google
-                                </button>
+                                <p>No service account credentials found. Add your <code>calendar-credentials.json</code> to the <code>data/</code> folder.</p>
+                                <div style="background:#1a1a2e;border-radius:6px;padding:12px;font-size:0.85em;margin-top:10px;">
+                                    <strong>Steps to set up:</strong>
+                                    <ol style="margin:8px 0 0 0;padding-left:18px;line-height:1.8;">
+                                        <li>Go to <a href="https://console.cloud.google.com" target="_blank">Google Cloud Console</a></li>
+                                        <li>Enable the <strong>Google Calendar API</strong></li>
+                                        <li>Create a <strong>Service Account</strong> under Credentials</li>
+                                        <li>Download the JSON key and save it as <code>data/calendar-credentials.json</code></li>
+                                        <li>Share your Google Calendar(s) with the service account email</li>
+                                        <li>Restart the bot, then click <strong>Browse My Google Calendars</strong></li>
+                                    </ol>
+                                </div>
                             </div>
-                            
-                            <!-- Logged in state -->
+                            <!-- Configured state -->
                             <div id="googleLoggedIn" class="hidden">
-                                <div style="display: flex; align-items: center; gap: 15px; margin-bottom: 15px;">
-                                    <img id="googleUserPicture" src="" alt="Profile" style="width: 48px; height: 48px; border-radius: 50%;">
+                                <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px;">
+                                    <span style="font-size:2em;">✅</span>
                                     <div>
-                                        <div><strong id="googleUserName"></strong></div>
-                                        <div style="color: #888; font-size: 0.9em;" id="googleUserEmail"></div>
+                                        <div><strong>Service Account Connected</strong></div>
+                                        <div style="color:#888;font-size:0.85em;" id="googleUserEmail"></div>
                                     </div>
                                 </div>
-                                <div class="action-buttons">
-                                    <button class="btn btn-secondary" onclick="loadOAuthCalendars()">
-                                        📅 Browse My Calendars (OAuth)
-                                    </button>
-                                    <button class="btn btn-danger" onclick="logoutFromGoogle()">
-                                        Disconnect Google Account
-                                    </button>
-                                </div>
-                                <div id="googleTokenExpiry" class="hidden" style="margin-top: 10px; padding: 10px; background: #fff3cd; border-radius: 4px; font-size: 0.9em;">
-                                    <strong>⚠️ Token expiring soon</strong>
-                                    <p style="margin: 5px 0 0 0;">Your access will expire soon. Please reconnect your account.</p>
+                                <div style="background:#1a1a2e;border-radius:6px;padding:10px;font-size:0.85em;margin-bottom:12px;">
+                                    ℹ️ Share calendars with the email above in <strong>Google Calendar → Settings → Share with specific people</strong>
                                 </div>
                             </div>
                         </div>

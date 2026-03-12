@@ -43,3 +43,9 @@ desktop.ini
 # Runtime
 pids/
 *.pid
+
+# Encrypted secrets store
+data/secrets.enc
+src/data/calendar-credentials.json
+src/data/calendar-credentials.json
+src/data/calendar-credentials.json

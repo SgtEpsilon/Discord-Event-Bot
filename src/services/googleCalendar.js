@@ -6,7 +6,8 @@ const { CalendarConfig } = require('../models');
 
 class GoogleCalendarService {
   constructor() {
-    this.credentialsPath = process.env.GOOGLE_CALENDAR_CREDENTIALS || './data/calendar-credentials.json';
+    this.credentialsPath = process.env.GOOGLE_CALENDAR_CREDENTIALS ||
+      require('path').join(__dirname, '..', 'data', 'calendar-credentials.json');
     this.auth = null;
   }
 
