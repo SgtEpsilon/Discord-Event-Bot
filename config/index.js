@@ -49,12 +49,13 @@ const config = {
   },
   
   // File paths
+  // NOTE: guilds are now stored in the SQLite database via the Guild model.
+  //       Use src/repositories/GuildRepository for all guild CRUD operations.
   files: {
     events: './data/events.json',
     presets: './data/presets.json',
     eventsConfig: './data/events-config.json',
-    streaming: './data/streaming.json',
-    guilds: './data/guilds.json'
+    streaming: './data/streaming.json'
   },
   
   // Bot settings - UPDATED TO 5 MINUTES!

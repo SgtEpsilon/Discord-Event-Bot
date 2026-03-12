@@ -15,7 +15,7 @@
     "pm2:status": "pm2 status",
     "pm2:monitor": "node pm2-monitor.js",
     "pm2:delete": "pm2 delete all",
-    "diagnostic": "node diagnostic.js",
+    "migrate:guilds": "node scripts/migrate-guilds-to-db.js",
     "calendar:diagnostic": "node diagnostics/calendar-diagnostic.js",
     "calendar:debug": "node diagnostics/calendar-sync-debugger.js",
     "calendar:fix": "node diagnostics/fix-calendar-sync.js",
